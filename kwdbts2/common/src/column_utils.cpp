@@ -75,6 +75,15 @@ bool ParseToAttributeInfo(const roachpb::KWDBKTSColumn& col, AttributeInfo& attr
   }
   attr_info.col_flag = (ColumnFlag) col.col_type();
   attr_info.version = 1;
+  if (col.has_encode_type()) {
+    attr_info.encode_type = col.encode_type();
+  }
+  if (col.has_compress_type()) {
+    attr_info.compress_type = col.compress_type();
+  }
+  if (col.has_compress_level()) {
+    attr_info.compress_level = col.compress_level();
+  }
 
   return true;
 }
@@ -137,7 +146,10 @@ bool ParseToColumnInfo(struct AttributeInfo& attr_info, roachpb::KWDBKTSColumn& 
   if (attr_info.isFlag(AINFO_DROPPED)) {
     col.set_dropped(true);
   }
-  col.set_col_type((roachpb::KWDBKTSColumn_ColumnType)(attr_info.col_flag));
+  col.set_col_type(static_cast<roachpb::KWDBKTSColumn_ColumnType>(attr_info.col_flag));
+  col.set_encode_type(static_cast<roachpb::ColumnEncodeType>(attr_info.encode_type));
+  col.set_compress_type(static_cast<roachpb::ColumnCompressType>(attr_info.compress_type));
+  col.set_compress_level(static_cast<roachpb::ColumnCompressLevel>(attr_info.compress_level));
   return true;
 }
 

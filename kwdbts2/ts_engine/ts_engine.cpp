@@ -973,9 +973,9 @@ KStatus TSEngineImpl::DropColumn(kwdbContext_p ctx, const KTableKey &table_id, c
   return s;
 }
 
-KStatus TSEngineImpl::AlterColumnType(kwdbContext_p ctx, const KTableKey &table_id, char *transaction_id,
-                                        bool& is_dropped, TSSlice new_column, TSSlice origin_column,
-                                        uint32_t cur_version, uint32_t new_version, string &err_msg) {
+KStatus TSEngineImpl::AlterColumn(kwdbContext_p ctx, const KTableKey &table_id, char *transaction_id,
+                                  bool& is_dropped, TSSlice new_column, TSSlice origin_column,
+                                  uint32_t cur_version, uint32_t new_version, string &err_msg) {
   roachpb::KWDBKTSColumn new_col_meta;
   if (!new_col_meta.ParseFromArray(new_column.data, new_column.len)) {
     LOG_ERROR("ParseFromArray Internal Error");
@@ -991,14 +991,27 @@ KStatus TSEngineImpl::AlterColumnType(kwdbContext_p ctx, const KTableKey &table_
   // Get transaction ID.
   uint64_t x_id = tsx_manager_sys_->getMtrID(transaction_id);
 
-  // Write Alter DDL into WAL, which type is ALTER_COLUMN_TYPE.
-  s = wal_sys_->WriteDDLAlterWAL(ctx, x_id, table_id, AlterType::ALTER_COLUMN_TYPE, cur_version, new_version, origin_column);
+  AlterType alter_type;
+  switch (new_col_meta.alter_type()) {
+  case roachpb::KW_ALTER_COLUMN_TYPE:
+    alter_type = AlterType::ALTER_COLUMN_TYPE;
+    break;
+  case roachpb::KW_ALTER_COLUMN_COMPRESS_INFO:
+    alter_type = AlterType::ALTER_COLUMN_COMPRESS_INFO;
+    break;
+  default:
+    LOG_ERROR("Unknown alter type: %d", new_col_meta.alter_type());
+    return KStatus::FAIL;
+  }
+
+  // Write Alter DDL into WAL
+  s = wal_sys_->WriteDDLAlterWAL(ctx, x_id, table_id, alter_type, cur_version, new_version, origin_column);
   if (s != KStatus::SUCCESS) {
     err_msg = "Write WAL error";
     LOG_ERROR("%s", err_msg.c_str());
     return s;
   }
-  s = ts_table->AlterTable(ctx, AlterType::ALTER_COLUMN_TYPE, &new_col_meta, cur_version, new_version, err_msg);
+  s = ts_table->AlterTable(ctx, alter_type, &new_col_meta, cur_version, new_version, err_msg);
   if (s != KStatus::SUCCESS) {
     LOG_ERROR("Alter column type failed, table id: %lu, cur_version: %d, new_version: %d, error message: %s.",
     table_id, cur_version, new_version, err_msg.c_str());

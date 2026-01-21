@@ -534,7 +534,7 @@ struct TSEngine {
     *
     * @return KStatus
     */
-  virtual KStatus AlterColumnType(kwdbContext_p ctx, const KTableKey& table_id, char* transaction_id, bool& is_dropped,
+  virtual KStatus AlterColumn(kwdbContext_p ctx, const KTableKey& table_id, char* transaction_id, bool& is_dropped,
     TSSlice new_column, TSSlice origin_column, uint32_t cur_version, uint32_t new_version, string& msg) = 0;
 
   /**

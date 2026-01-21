@@ -795,7 +795,7 @@ func (r *TsEngine) AlterTSColumnType(
 	originColMeta []byte,
 ) error {
 	r.checkOrWaitForOpen()
-	status := C.TSAlterColumnType(
+	status := C.TSAlterColumn(
 		r.tdb,
 		C.TSTableID(tableID),
 		(*C.char)(unsafe.Pointer(&transactionID[0])),

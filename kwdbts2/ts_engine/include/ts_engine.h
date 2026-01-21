@@ -257,7 +257,7 @@ class TSEngineImpl : public TSEngine {
   KStatus DropColumn(kwdbContext_p ctx, const KTableKey& table_id, char* transaction_id, bool& is_dropped,
                      TSSlice column, uint32_t cur_version, uint32_t new_version, string& err_msg) override;
 
-  KStatus AlterColumnType(kwdbContext_p ctx, const KTableKey& table_id, char* transaction_id, bool& is_dropped,
+  KStatus AlterColumn(kwdbContext_p ctx, const KTableKey& table_id, char* transaction_id, bool& is_dropped,
     TSSlice new_column, TSSlice origin_column, uint32_t cur_version, uint32_t new_version, string& err_msg) override;
 
   KStatus AlterPartitionInterval(kwdbContext_p ctx, const KTableKey& table_id, uint64_t partition_interval) override {

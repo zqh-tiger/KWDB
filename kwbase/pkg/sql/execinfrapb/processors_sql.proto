@@ -184,6 +184,7 @@ enum OperatorType {
   TsAlterTagIndex = 22;
   TsAlterRetentions = 23;
   TsManualVacuum = 24;
+  TsAlterCompressInfo = 25;
 }
 
 // TsInsertSelSpec build payLoads for TsInsert

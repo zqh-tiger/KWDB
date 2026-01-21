@@ -82,6 +82,43 @@ message KWDBTsTable {
   optional uint64 hash_num = 14;
 }
 
+// KWDBAlterType
+enum KWDBAlterType {
+  KW_ALTER_NULL = 0;
+  KW_ALTER_COLUMN_TYPE = 1;
+  KW_ALTER_COLUMN_COMPRESS_INFO = 2;
+}
+
+// ColumnEncodeType
+enum ColumnEncodeType {
+  KW_COL_ENCODE_TYPE_NO = 0;
+  KW_COL_ENCODE_TYPE_SIMPLE8B = 1;
+  KW_COL_ENCODE_TYPE_RLE = 2;
+  KW_COL_ENCODE_TYPE_DELTA_I = 3;
+  KW_COL_ENCODE_TYPE_DELTA_D = 4;
+  KW_COL_ENCODE_TYPE_CHIMP = 5;
+  KW_COL_ENCODE_TYPE_DISABLED= 255;
+}
+
+// ColumnCompressType
+enum ColumnCompressType {
+  KW_COL_COMPRESS_TYPE_NO = 0;
+  KW_COL_COMPRESS_TYPE_SNAPPY = 1;
+  KW_COL_COMPRESS_TYPE_LZ4 = 2;
+  KW_COL_COMPRESS_TYPE_ZLIB = 3;
+  KW_COL_COMPRESS_TYPE_ZSTD = 4;
+  KW_COL_COMPRESS_TYPE_XZ = 5;
+  KW_COL_COMPRESS_TYPE_TSZ = 6;
+  KW_COL_COMPRESS_TYPE_DISABLED = 255;
+}
+
+// ColumnCompressLevel
+enum ColumnCompressLevel {
+  KW_COL_COMPRESS_LEVEL_0 = 0;
+  KW_COL_COMPRESS_LEVEL_1 = 1;
+  KW_COL_COMPRESS_LEVEL_2 = 2;
+}
+
 // KWDBKTSColumn, TS table column
 message KWDBKTSColumn {
   // ColumnType
@@ -110,6 +147,10 @@ message KWDBKTSColumn {
   optional ColumnType col_type = 9;
   // The column has been marked dropped
   optional bool dropped = 10;
+  optional ColumnEncodeType encode_type = 11;
+  optional ColumnCompressType compress_type = 12;
+  optional ColumnCompressLevel compress_level = 13;
+  optional KWDBAlterType alter_type = 14;
 }
 
 // NTagHashIndexInfo

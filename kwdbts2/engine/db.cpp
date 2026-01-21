@@ -1257,7 +1257,7 @@ TSStatus TSDropColumn(TSEngine* engine, TSTableID table_id, char* transaction_id
   return kTsSuccess;
 }
 
-TSStatus TSAlterColumnType(TSEngine* engine, TSTableID table_id, char* transaction_id,
+TSStatus TSAlterColumn(TSEngine* engine, TSTableID table_id, char* transaction_id,
                            TSSlice new_column, TSSlice origin_column,
                            uint32_t cur_version, uint32_t new_version) {
   kwdbContext_t context;
@@ -1269,7 +1269,7 @@ TSStatus TSAlterColumnType(TSEngine* engine, TSTableID table_id, char* transacti
 
   string err_msg;
   bool is_dropped = false;
-  s = engine->AlterColumnType(ctx_p, table_id, transaction_id, is_dropped, new_column, origin_column,
+  s = engine->AlterColumn(ctx_p, table_id, transaction_id, is_dropped, new_column, origin_column,
                               cur_version, new_version, err_msg);
   if (s != KStatus::SUCCESS) {
     if (err_msg.empty()) {
