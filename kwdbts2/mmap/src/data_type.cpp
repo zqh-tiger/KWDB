@@ -24,9 +24,9 @@ AttributeInfo::AttributeInfo() {
   max_len = 0;
   version = 0;
   col_flag = COL_INVALID;
-  encode_type = roachpb::KW_COL_ENCODE_TYPE_NO;
-  compress_type = roachpb::KW_COL_COMPRESS_TYPE_NO;
-  compress_level = roachpb::KW_COL_COMPRESS_LEVEL_0;
+  encode_type = roachpb::KW_COL_ENCODE_TYPE_UNSPECIFIED;
+  compress_type = roachpb::KW_COL_COMPRESS_TYPE_UNSPECIFIED;
+  compress_level = roachpb::KW_COL_COMPRESS_LEVEL_UNSPECIFIED;
 }
 
 bool AttributeInfo::operator==(AttributeInfo& rhs) const {

@@ -209,14 +209,14 @@ message KWDBTsTable {
 
 // KWDBAlterType
 enum KWDBAlterType {
-  KW_ALTER_NULL = 0;
+  KW_ALTER_UNSPECIFIED = 0;
   KW_ALTER_COLUMN_TYPE = 1;
   KW_ALTER_COLUMN_COMPRESS_INFO = 2;
 }
 
 // ColumnEncodeType
 enum ColumnEncodeType {
-  KW_COL_ENCODE_TYPE_NO = 0;
+  KW_COL_ENCODE_TYPE_UNSPECIFIED = 0;
   KW_COL_ENCODE_TYPE_SIMPLE8B = 1;
   KW_COL_ENCODE_TYPE_RLE = 2;
   KW_COL_ENCODE_TYPE_DELTA_I = 3;
@@ -227,7 +227,7 @@ enum ColumnEncodeType {
 
 // ColumnCompressType
 enum ColumnCompressType {
-  KW_COL_COMPRESS_TYPE_NO = 0;
+  KW_COL_COMPRESS_TYPE_UNSPECIFIED = 0;
   KW_COL_COMPRESS_TYPE_SNAPPY = 1;
   KW_COL_COMPRESS_TYPE_LZ4 = 2;
   KW_COL_COMPRESS_TYPE_ZLIB = 3;
@@ -239,9 +239,11 @@ enum ColumnCompressType {
 
 // ColumnCompressLevel
 enum ColumnCompressLevel {
-  KW_COL_COMPRESS_LEVEL_0 = 0;
-  KW_COL_COMPRESS_LEVEL_1 = 1;
-  KW_COL_COMPRESS_LEVEL_2 = 2;
+  // Not specified compress level when creating or modifying the table
+  KW_COL_COMPRESS_LEVEL_UNSPECIFIED = 0;
+  KW_COL_COMPRESS_LEVEL_LOW = 1;
+  KW_COL_COMPRESS_LEVEL_MEDIUM = 2;
+  KW_COL_COMPRESS_LEVEL_HIGH = 3;
 }
 
 // KWDBKTSColumn is column of time-series table.
