@@ -287,6 +287,7 @@ KStatus TsBlockSpan::BuildCompressedData(TsBufferBuilder* data) {
       lsn_data.append(reinterpret_cast<const char*>(block_->GetOSNAddr(start_row_ + row_idx)), d_size);
     }
     TsBufferBuilder compressed;
+    // LSN use default algorithm
     auto [first, second] = mgr.GetDefaultAlgorithm(d_type);
     TSSlice plain = lsn_data.AsSlice();
     mgr.CompressData(plain, nullptr, nrow_, &compressed, first, second);
@@ -363,7 +364,8 @@ KStatus TsBlockSpan::BuildCompressedData(TsBufferBuilder* data) {
       mgr.CompressBitmap(bitmap.get(), data);
       b = bitmap.get();
     }
-    auto [first, second] = mgr.GetDefaultAlgorithm(static_cast<DATATYPE>(d_type));
+    auto [first, second] = mgr.GetAlgorithm(d_type, (*scan_attrs_)[scan_idx]);
+    // auto [first, second] = mgr.GetDefaultAlgorithm(static_cast<DATATYPE>(d_type));
     if (is_var_col) {
       // varchar use Gorilla algorithm
       first = TsCompAlg::kSimple8B_V2_u32;

@@ -107,7 +107,8 @@ bool TsColumnBlock::GetCompressedData(TsBufferBuilder* out, TsColumnCompressInfo
   // 2. compress fixlen data
   TsBufferBuilder tmp;
   TsBitmapBase* p_bitmap = bitmap_.get();
-  auto [first, second] = mgr.GetDefaultAlgorithm(static_cast<DATATYPE>(col_schema_.type));
+  auto [first, second] = mgr.GetAlgorithm(static_cast<DATATYPE>(col_schema_.type), col_schema_);
+  // auto [first, second] = mgr.GetDefaultAlgorithm(static_cast<DATATYPE>(col_schema_.type));
   if (isVarLenType(col_schema_.type)) {
     // varchar use simple8b algorithm
     first = compress ? TsCompAlg::kSimple8B_V2_u32 : TsCompAlg::kPlain;

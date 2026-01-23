@@ -925,6 +925,7 @@ CompressorManager::CompressorManager() {
 
   ts_comp_[TsCompAlg::kBitPacking] = &ConcreateTsCompressor<BitPacking>::GetInstance();
 
+  // TODO(qinlipeng): change default encode and compress type
   default_algs_[DATATYPE::INT16] = {TsCompAlg::kSimple8B_V2_s16, second};
   default_algs_[DATATYPE::INT32] = {TsCompAlg::kSimple8B_V2_s32, second};
   default_algs_[DATATYPE::INT64] = {TsCompAlg::kSimple8B_V2_s64, second};
@@ -956,10 +957,74 @@ auto CompressorManager::GetCompressor(TsCompAlg first, GenCompAlg second) const 
     if (it != ts_comp_.end()) first_comp = it->second;
   }
   {
+    // TODO(qinlipeng): add other compress type
     auto it = general_compressor_.find(second);
     if (it != general_compressor_.end()) second_comp = it->second;
   }
   return TwoLevelCompressor{first_comp, second_comp, first, second};
+}
+
+auto CompressorManager::GetAlgorithm(DATATYPE dtype, const AttributeInfo& attr_info) const -> std::tuple<TsCompAlg, GenCompAlg> {
+  TsCompAlg first;
+  GenCompAlg second;
+  switch (attr_info.encode_type) {
+  case roachpb::KW_COL_ENCODE_TYPE_UNSPECIFIED: {
+    auto it = default_algs_.find(dtype);
+    if (it != default_algs_.end()) {
+      first = std::get<0>(it->second);
+    }
+    first = TsCompAlg::kPlain;
+    break;
+  }
+  case roachpb::KW_COL_ENCODE_TYPE_SIMPLE8B:
+    first = TsCompAlg::kSimple8B_u64;
+    break;
+  case roachpb::KW_COL_ENCODE_TYPE_RLE:
+    first = TsCompAlg::kBitPacking;
+    break;
+  case roachpb::KW_COL_ENCODE_TYPE_DELTA_I:
+    first = TsCompAlg::kGorilla_64;
+    break;
+  case roachpb::KW_COL_ENCODE_TYPE_DELTA_D:
+    first = TsCompAlg::kGorilla_64;
+    break;
+  case roachpb::KW_COL_ENCODE_TYPE_CHIMP:
+    first = TsCompAlg::kChimp_64;
+    break;
+  case roachpb::KW_COL_ENCODE_TYPE_DISABLED:
+  default:
+    first = TsCompAlg::kPlain;
+    break;
+  }
+
+  switch (attr_info.compress_type) {
+  case roachpb::KW_COL_COMPRESS_TYPE_UNSPECIFIED:
+    second = GenCompAlg::kSnappy;
+    break;
+  case roachpb::KW_COL_COMPRESS_TYPE_SNAPPY:
+    second = GenCompAlg::kSnappy;
+    break;
+  case roachpb::KW_COL_COMPRESS_TYPE_LZ4:
+    second = GenCompAlg::kLz4;
+    break;
+  case roachpb::KW_COL_COMPRESS_TYPE_ZLIB:
+    second = GenCompAlg::kZlib;
+    break;
+  case roachpb::KW_COL_COMPRESS_TYPE_ZSTD:
+    second = GenCompAlg::kZstd;
+    break;
+  case roachpb::KW_COL_COMPRESS_TYPE_XZ:
+    second = GenCompAlg::kXz;
+    break;
+  case roachpb::KW_COL_COMPRESS_TYPE_TSZ:
+    second = GenCompAlg::kTsz;
+    break;
+  case roachpb::KW_COL_COMPRESS_TYPE_DISABLED:
+  default:
+    second = GenCompAlg::kPlain;
+    break;
+  }
+  return {first, second};
 }
 
 auto CompressorManager::GetDefaultAlgorithm(DATATYPE dtype) const -> std::tuple<TsCompAlg, GenCompAlg> {

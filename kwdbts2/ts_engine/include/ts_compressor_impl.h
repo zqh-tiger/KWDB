@@ -25,6 +25,8 @@ using std::string;
 #include "snappy-sinksource.h"
 #include "ts_bitmap.h"
 #include "ts_compressor.h"
+#include <lz4.h>
+#include <zstd.h>
 
 namespace kwdbts {
 
@@ -155,6 +157,14 @@ class Chimp : public CompressorImpl {
   size_t GetUncompressedSize(TSSlice data, uint64_t count) const override { return stride * count; }
 };
 
+// TODO(qinlipeng): kGzip = 2,
+// kLzo = 3,
+// kLz4 = 4,
+// kXz = 5,
+// kZstd = 6,
+// kLzma = 7,
+// kZlib = 8,
+// kTsz = 9,
 class SnappyString : public CompressorImpl {
  private:
   SnappyString() = default;
@@ -199,6 +209,60 @@ class SnappyString : public CompressorImpl {
     }
     return -1;
   }
+};
+
+// LZ4
+class LZ4String : public CompressorImpl {
+  private:
+    LZ4String() = default;
+    // LZ4_stream_t a;
+    class BufferSink : public snappy::Sink {
+      TsBufferBuilder *out_;
+
+      public:
+        explicit BufferSink(TsBufferBuilder *out) : out_(out) {}
+        void Append(const char *bytes, size_t n) override { out_->append({bytes, n}); }
+    };
+
+  public:
+    static constexpr int stride = -1;
+    static LZ4String &GetInstance() {
+      static LZ4String inst;
+      return inst;
+    }
+    bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const override {
+      size_t com_space_size  = LZ4_compressBound(data.len);
+      char* com_ptr = static_cast<char*>(malloc(com_space_size));
+      if (com_space_size != 0) {
+        LZ4_compress_fast(data.data, com_ptr, data.len, com_space_size, 1/* need read from compress level */);
+      }
+
+      // out->clear();
+      // snappy::ByteArraySource src(data.data, data.len);
+      // BufferSink sink(out);
+      // snappy::Compress(&src, &sink);
+      return true;
+    }
+    bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override {
+      TsBufferBuilder builder;
+      BufferSink sink(&builder);
+
+      snappy::ByteArraySource src(data.data, data.len);
+      bool ok = snappy::Uncompress(&src, &sink);
+      if (!ok) {
+        return false;
+      }
+      *out = builder.GetBuffer();
+      return true;
+    }
+    size_t GetUncompressedSize(TSSlice data, uint64_t count) const override {
+      size_t result;
+      bool ok = snappy::GetUncompressedLength(data.data, data.len, &result);
+      if (ok) {
+        return result;
+      }
+      return -1;
+    }
 };
 
 template <class Compressor>

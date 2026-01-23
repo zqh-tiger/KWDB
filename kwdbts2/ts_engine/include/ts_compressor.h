@@ -63,12 +63,14 @@ enum class TsCompAlg : uint16_t {
 enum class GenCompAlg : uint16_t {
   kPlain = 0,
   kSnappy = 1,
-  // kGzip = 2,
-  // kLzo = 3,
-  // kLz4 = 4,
-  // kXz = 5,
-  // kZstd = 6,
-  // kLzma = 7,
+  kGzip = 2,
+  kLzo = 3,
+  kLz4 = 4,
+  kXz = 5,
+  kZstd = 6,
+  kLzma = 7,
+  kZlib = 8,
+  kTsz = 9,
   GEN_COMP_ALG_LAST
 };
 
@@ -127,6 +129,7 @@ class CompressorManager {
   void operator=(const CompressorManager&) = delete;
 
   TwoLevelCompressor GetCompressor(TsCompAlg first, GenCompAlg second) const;
+  std::tuple<TsCompAlg, GenCompAlg> GetAlgorithm(DATATYPE dtype, const AttributeInfo& attr_info) const;
   std::tuple<TsCompAlg, GenCompAlg> GetDefaultAlgorithm(DATATYPE dtype) const;
   TwoLevelCompressor GetDefaultCompressor(DATATYPE dtype) const;
 

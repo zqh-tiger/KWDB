@@ -277,7 +277,8 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
     }
     TsBitmapBase* b = has_bitmap ? block.bitmap.get() : nullptr;
     // compress col data & write to buffer
-    auto [first, second] = mgr.GetDefaultAlgorithm(d_type);
+    auto [first, second] = mgr.GetAlgorithm(d_type, metric_schema_[col_idx - 1]);
+    // auto [first, second] = mgr.GetDefaultAlgorithm(d_type);
     if (is_var_col) {
       // varchar offset use simple8b algorithm
       first = TsCompAlg::kSimple8B_V2_u32;
