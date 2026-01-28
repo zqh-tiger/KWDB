@@ -176,6 +176,9 @@ func (u *sqlSymUnion) UserDefinedVar() tree.UserDefinedVar {
 func (u *sqlSymUnion) columnIDList() tree.ColumnIDList {
     return u.val.(tree.ColumnIDList)
 }
+func (u *sqlSymUnion) compressLevel() *tree.CompressLevel {
+    return u.val.(*tree.CompressLevel)
+}
 func (u *sqlSymUnion) SelectIntoTargets() tree.SelectIntoTargets {
     return u.val.(tree.SelectIntoTargets)
 }
@@ -711,7 +714,7 @@ func (u *sqlSymUnion) triggerBody() tree.TriggerBody {
 %token <str> CACHE CALL CANCEL CASCADE CASE CAST CAST_CHECK CHANGEFEED CHAR
 %token <str> CHARACTER CHARACTERISTICS CHECK
 %token <str> CLOB CLUSTER COALESCE COLLATE COLLATION COLUMN COLUMNS COMMENT COMMIT
-%token <str> COMMITTED COMPACT COMPLETE CONCAT CONCURRENTLY CONFIG CONFIGS CONFIGURATION CONFIGURATIONS CONFIGURE
+%token <str> COMMITTED COMPACT COMPLETE COMPRESS CONCAT CONCURRENTLY CONFIG CONFIGS CONFIGURATION CONFIGURATIONS CONFIGURE
 %token <str> CONFLICT CONSTRAINT CONSTRAINTS CONTAINS CONVERSION COPY COVERING CREATE CREATEROLE CREATE_TIME
 %token <str> CROSS CUBE CURRENT CURRENT_CATALOG CURRENT_DATE CURRENT_SCHEMA
 %token <str> CURRENT_ROLE CURRENT_TIME CURRENT_TIMESTAMP
@@ -721,7 +724,7 @@ func (u *sqlSymUnion) triggerBody() tree.TriggerBody {
 %token <str> DEALLOCATE DEFERRABLE DEFERRED DELETE DESC DESCRIBE DEVICE
 %token <str> DICT DISCARD DISTINCT DISTRIBUTION DO DOMAIN DOUBLE DROP DISABLE
 
-%token <str> EACH ELSIF ENDIF ENDWHILE ENDCASE ENDLOOP ENDHANDLER
+%token <str> EACH ELSIF ENCODE ENDIF ENDWHILE ENDCASE ENDLOOP ENDHANDLER
 %token <str> ELSE ENCODING END ENDPOINT ENDTIME ENUM ESCAPE ESTIMATED EXCEPT EXCLUDE ENABLE
 %token <str> EXISTS EXECUTE EXPERIMENTAL
 %token <str> EXPERIMENTAL_FINGERPRINTS EXPERIMENTAL_REPLICA
@@ -1305,6 +1308,7 @@ func (u *sqlSymUnion) triggerBody() tree.TriggerBody {
 %type <tree.CompositeKeyMatchMethod> key_match
 %type <tree.ReferenceActions> reference_actions
 %type <tree.ReferenceAction> reference_action reference_on_delete reference_on_update
+%type <*tree.CompressLevel> opt_compress_level
 
 %type <tree.Expr> func_application func_expr_common_subexpr special_function
 %type <tree.Expr> func_expr func_expr_windowless
@@ -6211,6 +6215,21 @@ col_qualification:
 	{
 		$$.val = tree.NamedColumnQualification{Qualification: tree.ColumnComment($3)}
 	}
+| ENCODE non_reserved_word_or_sconst
+	{
+    $$.val = tree.NamedColumnQualification{Qualification: &tree.ColumnEncode{EncodeType: $2}}
+	}
+| COMPRESS non_reserved_word_or_sconst opt_compress_level
+	{
+		$$.val = tree.NamedColumnQualification{Qualification: &tree.ColumnCompress{CompressType: $2, CompressLevel: $3.compressLevel()}}
+	}
+
+opt_compress_level:
+	LEVEL non_reserved_word_or_sconst
+	{
+		$$.val = &tree.CompressLevel{CompressLevel: $2}
+	}
+| /* EMPTY */ { $$.val = (*tree.CompressLevel)(nil) }
 
 // DEFAULT NULL is already the default for Postgres. But define it here and
 // carry it forward into the system to make it explicit.
@@ -13720,6 +13739,7 @@ reserved_keyword:
 | COLLATE
 | COLUMN
 | COMMENT
+| COMPRESS
 | CONCURRENTLY
 | CONSTRAINT
 | CREATE
@@ -13740,6 +13760,7 @@ reserved_keyword:
 | EACH
 | ELSE
 | ELSIF
+| ENCODE
 | END
 | ENDIF
 | ENDWHILE

@@ -4088,6 +4088,18 @@ func (desc *ColumnDescriptor) SQLString() string {
 		}
 		f.WriteString(s)
 	}
+	if desc.TsCol.EncodeType != nil {
+		f.WriteString(" ENCODE ")
+		f.WriteString(*desc.TsCol.EncodeType)
+	}
+	if desc.TsCol.CompressType != nil {
+		f.WriteString(" COMPRESS ")
+		f.WriteString(*desc.TsCol.CompressType)
+		if desc.TsCol.CompressLevel != nil {
+			f.WriteString(" LEVEL ")
+			f.WriteString(*desc.TsCol.CompressLevel)
+		}
+	}
 	if desc.IsComputed() {
 		f.WriteString(" AS (")
 		f.WriteString(*desc.ComputeExpr)

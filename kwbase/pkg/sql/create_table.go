@@ -1722,6 +1722,14 @@ func checkColumnDef(
 	sessionData *sessiondata.SessionData,
 	columnDefaultExprs *[]tree.TypedExpr,
 ) error {
+	if !desc.IsTSTable() {
+		if d.ColumnEncode.EncodeType != nil {
+			return pgerror.Newf(pgcode.FeatureNotSupported, "ENCODE only supported on ts table")
+		}
+		if d.ColumnCompress.CompressType != nil {
+			return pgerror.Newf(pgcode.FeatureNotSupported, "COMPRESS only supported on ts table")
+		}
+	}
 	version := st.Version.ActiveVersionOrEmpty(ctx)
 	if !desc.IsVirtualTable() {
 		switch d.Type.Oid() {
@@ -1818,6 +1826,9 @@ func checkAndMakeTSColDesc(
 	if err != nil {
 		return nil, err
 	}
+	if err = checkColumnCompress(d, *col); err != nil {
+		return nil, err
+	}
 	if isFirstTSCol {
 		// Add a unique constraint to the first column of the timeseries table to prevent a validate error
 		tsPK := sqlbase.IndexDescriptor{
@@ -1830,6 +1841,54 @@ func checkAndMakeTSColDesc(
 		}
 	}
 	return expr, nil
+}
+
+// checkColumnCompress checks whether the encode type and compress type are valid.
+func checkColumnCompress(d *tree.ColumnTableDef, col *sqlbase.ColumnDescriptor) error {
+	if d.ColumnEncode.EncodeType != nil {
+		encodeType := strings.ToLower(*d.ColumnEncode.EncodeType)
+		if encodeType != "disabled" {
+			switch col.Type.Oid() {
+			case oid.T_int2, oid.T_int4, oid.T_int8, oid.T_timestamp, oid.T_timestamptz:
+				if encodeType != "simple8b" {
+					return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), encodeType)
+				}
+			case oid.T_float4, oid.T_float8:
+				if encodeType != "chimp" {
+					return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), encodeType)
+				}
+			case oid.T_bool:
+				if encodeType != "bit-packing" {
+					return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), encodeType)
+				}
+			default:
+				return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), encodeType)
+			}
+		}
+		col.TsCol.EncodeType = &encodeType
+	}
+	if d.ColumnCompress.CompressType != nil {
+		compressType := strings.ToLower(*d.ColumnCompress.CompressType)
+		switch compressType {
+		case "lz4", "zlib", "lzma", "snappy", "disabled":
+			col.TsCol.CompressType = &compressType
+		default:
+			return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support compress type %s", col.Type.Name(), compressType)
+		}
+		if d.ColumnCompress.CompressLevel != nil {
+			if compressType == "disabled" {
+				return pgerror.New(pgcode.FeatureNotSupported, "can not set level when compress type is disabled")
+			}
+			compressLevel := strings.ToLower(d.ColumnCompress.CompressLevel.CompressLevel)
+			switch compressLevel {
+			case "low", "medium", "high", "l", "m", "h":
+				col.TsCol.CompressLevel = &compressLevel
+			default:
+				return pgerror.Newf(pgcode.FeatureNotSupported, "compress level %s is not supported", compressLevel)
+			}
+		}
+	}
+	return nil
 }
 
 // buildIndexForDesc builds index descriptor for column descriptor

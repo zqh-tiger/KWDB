@@ -238,6 +238,42 @@ func makeKObjectTableForTs(d jobspb.SyncMetaCacheDetails) sqlbase.CreateTsTable 
 			VariableLengthType: col.TsCol.VariableLengthType,
 			ColType:            col.TsCol.ColumnType,
 		}
+		if col.TsCol.EncodeType != nil {
+			switch *col.TsCol.EncodeType {
+			case "simple8b":
+				kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_SIMPLE8B
+			case "chimp":
+				kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_CHIMP
+			case "bit-packing":
+				kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_BIT_PACKING
+			case "disabled":
+				kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_DISABLED
+			}
+		}
+		if col.TsCol.CompressType != nil {
+			switch *col.TsCol.CompressType {
+			case "lz4":
+				kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_LZ4
+			case "zlib":
+				kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_ZLIB
+			case "lzma":
+				kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_LZMA
+			case "snappy":
+				kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_SNAPPY
+			case "disabled":
+				kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_DISABLED
+			}
+		}
+		if col.TsCol.CompressLevel != nil {
+			switch *col.TsCol.CompressLevel {
+			case "low", "l":
+				kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_KW_COL_COMPRESS_LEVEL_LOW
+			case "medium", "m":
+				kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_KW_COL_COMPRESS_LEVEL_MEDIUM
+			case "high", "h":
+				kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_KW_COL_COMPRESS_LEVEL_HIGH
+			}
+		}
 		kColDescs = append(kColDescs, kColDesc)
 		KColumnsID = append(KColumnsID, uint32(col.ID))
 	}
