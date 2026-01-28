@@ -112,6 +112,8 @@ class CompressorManager {
 
   std::unordered_map<TsCompAlg, TsCompressorBase*> ts_comp_;
   std::unordered_map<GenCompAlg, GenCompressorBase*> general_compressor_;
+  // Regardless of how EngineOptions::compress_stage is set, default_algs_ maintains the encoding and compression
+  // algorithms corresponding to different data types.
   std::unordered_map<DATATYPE, std::tuple<TsCompAlg, GenCompAlg>> default_algs_;
 
   CompressorManager();

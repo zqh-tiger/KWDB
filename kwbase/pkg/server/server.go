@@ -180,6 +180,11 @@ var (
 			"2 means two stage compression",
 		2)
 
+	compressLevel = settings.RegisterPublicStringSetting(
+		"ts.compress.level",
+		"compression level for database's secondary compression: low, medium, high.",
+		"medium")
+
 	compressLastSegment = settings.RegisterPublicBoolSetting(
 		"ts.compress.last_segment.enabled",
 		"whether to compress last segment data",

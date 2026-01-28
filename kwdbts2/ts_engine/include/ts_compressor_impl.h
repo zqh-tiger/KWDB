@@ -244,6 +244,7 @@ class LZ4String : public CompressorImpl {
       return true;
     }
     bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override {
+      // TODO(qinlipeng):
       TsBufferBuilder builder;
       BufferSink sink(&builder);
 

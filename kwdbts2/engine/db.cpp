@@ -688,6 +688,16 @@ void TriggerSettingCallback(const std::string& key, const std::string& value) {
     TsLRUBlockCache::GetInstance().SetMaxMemorySize(EngineOptions::block_cache_max_size);
   } else if ("ts.compress.stage" == key) {
     EngineOptions::compress_stage = atoi(value.c_str());
+  } else if ("ts.compress.level" == key) {
+    if (value == "low" || value == "l") {
+      EngineOptions::compress_level = CompressLevel::LOW;
+    } else if (value == "medium" || value == "m") {
+      EngineOptions::compress_level = CompressLevel::MEDIUM;
+    } else if (value == "high" || value == "h") {
+      EngineOptions::compress_level = CompressLevel::HIGH;
+    } else {
+      LOG_ERROR("Invalid compress level:%s", value.c_str());
+    }
   } else if ("ts.compress.last_segment.enabled" == key) {
     EngineOptions::compress_last_segment = ("true" == value);
   } else if ("ts.force_sync_file.enabled" == key) {

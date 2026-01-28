@@ -47,6 +47,7 @@ int64_t EngineOptions::default_partition_interval = 3600 * 24 * 10;
 // default block cache max size is set to 1G
 int64_t EngineOptions::block_cache_max_size = 1024 * 1024 * 1024;
 uint8_t EngineOptions::compress_stage = 2;
+CompressLevel EngineOptions::compress_level = CompressLevel::LOW;
 bool EngineOptions::compress_last_segment = false;
 #ifdef KWBASE_OSS
 bool EngineOptions::force_sync_file = false;

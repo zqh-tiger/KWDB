@@ -107,6 +107,7 @@ struct EngineOptions {
   static int64_t block_cache_max_size;
   static TsIOMode g_io_mode;
   static uint8_t compress_stage;
+  static CompressLevel compress_level;
   static bool compress_last_segment;
   static bool force_sync_file;
   static size_t last_cache_max_size;

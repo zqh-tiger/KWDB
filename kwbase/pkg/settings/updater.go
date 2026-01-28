@@ -33,6 +33,7 @@ package settings
 import "C"
 import (
 	"strconv"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -107,7 +108,7 @@ var SendToAeList = []string{"ts.trace.on_off_list", "ts.dedup.rule", "ts.wal.fil
 	"ts.count.use_statistics.enabled", "ts.disk_free_space.alert_threshold", "ts.table_cache.capacity",
 	"ts.rows_per_block.max_limit", "ts.rows_per_block.min_limit", "ts.compact.max_limit",
 	"ts.reserved_last_segment.max_limit", "ts.mem_segment_size.max_limit", "ts.block.lru_cache.max_limit",
-	"ts.compress.stage", "ts.compress.last_segment.enabled", "ts.last_cache_size.max_limit",
+	"ts.compress.stage", "ts.compress.level", "ts.compress.last_segment.enabled", "ts.last_cache_size.max_limit",
 	"ts.force_sync_file.enabled", "ts.block_filter.sampling_ratio", "ts.count_recalc.cycle",
 	"ts.metric_schema_cache.max_limit"}
 
@@ -138,6 +139,9 @@ func (u updater) Set(key, rawValue string, vt string) error {
 	}
 
 	if needSendToAE(key) {
+		if key == "ts.compress.level" {
+			rawValue = strings.ToLower(rawValue)
+		}
 		C.TSSetClusterSetting(goToTSSlice([]byte(key)), goToTSSlice([]byte(rawValue)))
 	}
 

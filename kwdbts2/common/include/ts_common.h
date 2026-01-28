@@ -121,6 +121,12 @@ enum SortOrder {
   DESC,
 };
 
+enum CompressLevel {
+  LOW = 0,
+  MEDIUM,
+  HIGH
+};
+
 struct Batch {
   Batch() = delete;
 

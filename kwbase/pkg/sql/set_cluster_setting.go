@@ -231,6 +231,15 @@ func checkTsCompressStage(encodedValue string) error {
 	return nil
 }
 
+func checkTsCompressLevel(encodedValue string) error {
+	switch strings.ToLower(encodedValue) {
+	case "low", "l", "medium", "m", "high", "h":
+		return nil
+	default:
+		return errors.New("invalid value, allowed values are 'low', 'l', 'medium', 'm', 'high', 'h'")
+	}
+}
+
 func checkTsCompressLastSegment(encodedValue string) error {
 	_, err := strconv.ParseBool(encodedValue)
 	if err != nil {
@@ -283,6 +292,7 @@ var CheckClusterSetting = map[string]CheckOperation{
 	"ts.rows_per_block.min_limit":        checkTsRowsPerBlockMinLimit,
 	"ts.compact.max_limit":               checkTsCompactLastSegmentMaxLimit,
 	"ts.compress.stage":                  checkTsCompressStage,
+	"ts.compress.Level":                  checkTsCompressLevel,
 	"ts.compress.last_segment.enabled":   checkTsCompressLastSegment,
 	"ts.reserved_last_segment.max_limit": checkTsReservedLastSegmentMaxLimit,
 	"ts.force_sync_file.enabled":         checkBool,
