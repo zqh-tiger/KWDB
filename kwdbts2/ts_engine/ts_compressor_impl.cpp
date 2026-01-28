@@ -964,8 +964,9 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype, const AttributeInfo& attr_i
     auto it = default_algs_.find(dtype);
     if (it != default_algs_.end()) {
       first = std::get<0>(it->second);
+    } else {
+      first = TsCompAlg::kPlain;
     }
-    first = TsCompAlg::kPlain;
     break;
   }
   case roachpb::KW_COL_ENCODE_TYPE_SIMPLE8B:
@@ -978,6 +979,8 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype, const AttributeInfo& attr_i
     first = TsCompAlg::kChimp_64;
     break;
   case roachpb::KW_COL_ENCODE_TYPE_DISABLED:
+    first = TsCompAlg::kDisabled;
+    break;
   default:
     first = TsCompAlg::kPlain;
     break;
@@ -985,7 +988,7 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype, const AttributeInfo& attr_i
 
   switch (attr_info.compress_type) {
   case roachpb::KW_COL_COMPRESS_TYPE_UNSPECIFIED:
-    second = GenCompAlg::kSnappy;
+    second = GenCompAlg::kPlain;
     break;
   case roachpb::KW_COL_COMPRESS_TYPE_SNAPPY:
     second = GenCompAlg::kSnappy;
@@ -1000,6 +1003,8 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype, const AttributeInfo& attr_i
     second = GenCompAlg::kLzma;
     break;
   case roachpb::KW_COL_COMPRESS_TYPE_DISABLED:
+    second = GenCompAlg::kDisabled;
+    break;
   default:
     second = GenCompAlg::kPlain;
     break;
