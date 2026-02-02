@@ -98,6 +98,7 @@ func (*AlterTableSetTag) alterTableCmd()             {}
 func (*AlterTableSetRetentions) alterTableCmd()      {}
 func (*AlterTableSetActivetime) alterTableCmd()      {}
 func (*AlterPartitionInterval) alterTableCmd()       {}
+func (*AlterTableModifyCompress) alterTableCmd()     {}
 
 var _ AlterTableCmd = &AlterTableAddColumn{}
 var _ AlterTableCmd = &AlterTableAddConstraint{}
@@ -123,6 +124,7 @@ var _ AlterTableCmd = &AlterTableSetTag{}
 var _ AlterTableCmd = &AlterTableSetRetentions{}
 var _ AlterTableCmd = &AlterTableSetActivetime{}
 var _ AlterTableCmd = &AlterPartitionInterval{}
+var _ AlterTableCmd = &AlterTableModifyCompress{}
 
 // ColumnMutationCmd is the subset of AlterTableCmds that modify an
 // existing column.
@@ -689,6 +691,37 @@ func (node *AlterTableSetActivetime) Format(ctx *FmtCtx) {
 // TelemetryCounter implements the AlterTableCmd interface.
 func (node *AlterTableSetActivetime) TelemetryCounter() telemetry.Counter {
 	return sqltelemetry.SchemaChangeAlterCounterWithExtra("table", "set_activetime")
+}
+
+// AlterTableModifyCompress represents an ALTER TABLE MODIFY COLUMN statement.
+type AlterTableModifyCompress struct {
+	Column        Name
+	EncodeType    *string
+	CompressType  *string
+	CompressLevel *string
+}
+
+// Format implements the NodeFormatter interface.
+func (node *AlterTableModifyCompress) Format(ctx *FmtCtx) {
+	ctx.WriteString(" MODIFY COLUMN ")
+	ctx.FormatNode(&node.Column)
+	if node.EncodeType != nil {
+		ctx.WriteString(" ENCODE ")
+		ctx.WriteString(*node.EncodeType)
+	}
+	if node.CompressType != nil {
+		ctx.WriteString(" COMPRESS ")
+		ctx.WriteString(*node.CompressType)
+	}
+	if node.CompressLevel != nil {
+		ctx.WriteString(" LEVEL ")
+		ctx.WriteString(*node.CompressLevel)
+	}
+}
+
+// TelemetryCounter implements the AlterTableCmd interface.
+func (node *AlterTableModifyCompress) TelemetryCounter() telemetry.Counter {
+	return sqltelemetry.SchemaChangeAlterCounterWithExtra("table", "modify_column_compress")
 }
 
 // AlterPartitionInterval represents an ALTER TABLE SET PARTITION INTERVAL statement.

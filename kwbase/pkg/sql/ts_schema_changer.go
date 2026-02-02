@@ -71,6 +71,7 @@ const (
 	createTagIndex
 	dropTagIndex
 	alterTagIndex
+	modifyColumnCompress
 )
 
 // tsSchemaChangeResumer implements the jobs.Resumer interface for syncMetaCache
@@ -238,42 +239,7 @@ func makeKObjectTableForTs(d jobspb.SyncMetaCacheDetails) sqlbase.CreateTsTable 
 			VariableLengthType: col.TsCol.VariableLengthType,
 			ColType:            col.TsCol.ColumnType,
 		}
-		if col.TsCol.EncodeType != nil {
-			switch *col.TsCol.EncodeType {
-			case "simple8b":
-				kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_SIMPLE8B
-			case "chimp":
-				kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_CHIMP
-			case "bit-packing":
-				kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_BIT_PACKING
-			case "disabled":
-				kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_DISABLED
-			}
-		}
-		if col.TsCol.CompressType != nil {
-			switch *col.TsCol.CompressType {
-			case "lz4":
-				kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_LZ4
-			case "zlib":
-				kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_ZLIB
-			case "lzma":
-				kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_LZMA
-			case "snappy":
-				kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_SNAPPY
-			case "disabled":
-				kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_DISABLED
-			}
-		}
-		if col.TsCol.CompressLevel != nil {
-			switch *col.TsCol.CompressLevel {
-			case "low", "l":
-				kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_KW_COL_COMPRESS_LEVEL_LOW
-			case "medium", "m":
-				kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_KW_COL_COMPRESS_LEVEL_MEDIUM
-			case "high", "h":
-				kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_KW_COL_COMPRESS_LEVEL_HIGH
-			}
-		}
+		makeCompressInfo(&kColDesc, col)
 		kColDescs = append(kColDescs, kColDesc)
 		KColumnsID = append(KColumnsID, uint32(col.ID))
 	}
@@ -313,6 +279,45 @@ func makeKObjectTableForTs(d jobspb.SyncMetaCacheDetails) sqlbase.CreateTsTable 
 		TsTable:   kObjectTable,
 		KColumn:   kColDescs,
 		IndexInfo: nTagIndexInfos,
+	}
+}
+
+func makeCompressInfo(kColDesc *sqlbase.KWDBKTSColumn, col sqlbase.ColumnDescriptor) {
+	if col.TsCol.EncodeType != nil {
+		switch *col.TsCol.EncodeType {
+		case "simple8b":
+			kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_SIMPLE8B
+		case "chimp":
+			kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_CHIMP
+		case "bit-packing":
+			kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_BIT_PACKING
+		case "disabled":
+			kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_DISABLED
+		}
+	}
+	if col.TsCol.CompressType != nil {
+		switch *col.TsCol.CompressType {
+		case "lz4":
+			kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_LZ4
+		case "zlib":
+			kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_ZLIB
+		case "lzma":
+			kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_LZMA
+		case "snappy":
+			kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_SNAPPY
+		case "disabled":
+			kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_DISABLED
+		}
+	}
+	if col.TsCol.CompressLevel != nil {
+		switch *col.TsCol.CompressLevel {
+		case "low", "l":
+			kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_KW_COL_COMPRESS_LEVEL_LOW
+		case "medium", "m":
+			kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_KW_COL_COMPRESS_LEVEL_MEDIUM
+		case "high", "h":
+			kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_KW_COL_COMPRESS_LEVEL_HIGH
+		}
 	}
 }
 
@@ -365,8 +370,8 @@ func (sw *TSSchemaChangeWorker) handleResult(
 		//		d.DropMEInfo[0].TableID,
 		//		syncErr,
 		//	)
-		case alterKwdbAddColumn, alterKwdbDropColumn, alterKwdbAlterColumnType,
-			alterKwdbAddTag, alterKwdbDropTag, alterKwdbAlterTagType, createTagIndex, dropTagIndex:
+		case alterKwdbAddColumn, alterKwdbDropColumn, alterKwdbAlterColumnType, alterKwdbAddTag,
+			alterKwdbDropTag, alterKwdbAlterTagType, createTagIndex, dropTagIndex, modifyColumnCompress:
 			updateErr = sw.handleMutationForTSTable(ctx, d, syncErr)
 		case alterKwdbAlterPartitionInterval:
 			updateErr = p.handleAlterPartitionInterval(
@@ -826,8 +831,8 @@ func (sw *TSSchemaChangeWorker) makeAndRunDistPlan(
 	//		log.Infof(ctx, "%s, jobID: %d, checkReplica finished", opType, sw.job.ID())
 	//	}
 	//	newPlanNode = &tsDDLNode{d: d, nodeID: nodeList}
-	case alterKwdbAddColumn, alterKwdbDropColumn, alterKwdbAlterColumnType,
-		alterKwdbAddTag, alterKwdbDropTag, alterKwdbAlterTagType, createTagIndex, dropTagIndex:
+	case alterKwdbAddColumn, alterKwdbDropColumn, alterKwdbAlterColumnType, alterKwdbAddTag,
+		alterKwdbDropTag, alterKwdbAlterTagType, createTagIndex, dropTagIndex, modifyColumnCompress:
 		log.Infof(ctx, "%s job start, name: %s, id: %d, column/tag name: %s, jobID: %d, current tsVersion: %d",
 			opType, d.SNTable.Name, d.SNTable.ID, d.AlterTag.Name, sw.job.ID(), int(d.SNTable.TsTable.TsVersion))
 
@@ -1066,7 +1071,7 @@ func (sw *TSSchemaChangeWorker) sendTsTxn(
 ) error {
 	switch d.Type {
 	case alterKwdbAddTag, alterKwdbAddColumn, alterKwdbDropColumn, alterKwdbDropTag,
-		alterKwdbAlterTagType, alterKwdbAlterColumnType, createTagIndex, dropTagIndex:
+		alterKwdbAlterTagType, alterKwdbAlterColumnType, createTagIndex, dropTagIndex, modifyColumnCompress:
 		nodeList := sw.healthyNodes
 		txnID := strconv.AppendInt([]byte{}, *sw.job.ID(), 10)
 		tsTxn := tsTxn{txnID: txnID, txnEvent: event}
@@ -1143,6 +1148,8 @@ func getDDLOpType(op int32) string {
 		return "create tag index"
 	case dropTagIndex:
 		return "drop tag index"
+	case modifyColumnCompress:
+		return "modify column"
 	}
 	return ""
 }
@@ -1234,7 +1241,7 @@ func (sw *TSSchemaChangeWorker) handleMutationForTSTable(
 			}
 			return nil
 		}
-	case alterKwdbAlterColumnType, alterKwdbAlterTagType:
+	case alterKwdbAlterColumnType, alterKwdbAlterTagType, modifyColumnCompress:
 		updateFn = func(tableDesc *sqlbase.MutableTableDescriptor) error {
 			i := 0
 			for _, mutation := range tableDesc.Mutations {

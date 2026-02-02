@@ -176,9 +176,6 @@ func (u *sqlSymUnion) UserDefinedVar() tree.UserDefinedVar {
 func (u *sqlSymUnion) columnIDList() tree.ColumnIDList {
     return u.val.(tree.ColumnIDList)
 }
-func (u *sqlSymUnion) compressLevel() *tree.CompressLevel {
-    return u.val.(*tree.CompressLevel)
-}
 func (u *sqlSymUnion) SelectIntoTargets() tree.SelectIntoTargets {
     return u.val.(tree.SelectIntoTargets)
 }
@@ -756,7 +753,7 @@ func (u *sqlSymUnion) triggerBody() tree.TriggerBody {
 %token <str> LOCALTIME LOCALTIMESTAMP LOCATION LOCKED LOGIN LOOKUP LOOP LOW LSHIFT
 %token <str> ACTIVETIME LUA
 
-%token <str> M MATCH MATERIALIZED MB MEMCAPACITY MEMORY MERGE MICROSECOND MILLISECOND MINVALUE MAXVALUE MINUTE MON MONTH MS
+%token <str> M MATCH MATERIALIZED MB MEMCAPACITY MEMORY MERGE MICROSECOND MILLISECOND MINVALUE MAXVALUE MINUTE MODIFY MON MONTH MS
 
 %token <str> NAN NAME NAMES NANOSECOND NATURAL NCHAR NEVER NEXT NO NOCREATEROLE NOLOGIN NO_INDEX_JOIN
 %token <str> NONE NORMAL NOT NOTHING NOTNULL NOWAIT NS NULL NULLIF NULLS NUMERIC NVARCHAR
@@ -1308,7 +1305,7 @@ func (u *sqlSymUnion) triggerBody() tree.TriggerBody {
 %type <tree.CompositeKeyMatchMethod> key_match
 %type <tree.ReferenceActions> reference_actions
 %type <tree.ReferenceAction> reference_action reference_on_delete reference_on_update
-%type <*tree.CompressLevel> opt_compress_level
+%type <*string> opt_compress_level opt_compress_type opt_encode_type
 
 %type <tree.Expr> func_application func_expr_common_subexpr special_function
 %type <tree.Expr> func_expr func_expr_windowless
@@ -2124,6 +2121,32 @@ alter_table_cmd:
   	  TimeInput: $4.timeInput(),
   	}
   }
+| MODIFY COLUMN column_name opt_encode_type opt_compress_type opt_compress_level
+	{
+		$$.val = &tree.AlterTableModifyCompress{
+				Column:        tree.Name($3),
+      	EncodeType:		 $4.strPtr(),
+      	CompressType:  $5.strPtr(),
+      	CompressLevel: $6.strPtr(),
+		}
+	}
+
+opt_encode_type:
+	ENCODE non_reserved_word_or_sconst
+	{
+		encodeType := $2
+		$$.val = &encodeType
+	}
+| /* EMPTY */ { $$.val = (*string)(nil) }
+
+opt_compress_type:
+	COMPRESS non_reserved_word_or_sconst
+	{
+		compressType := $2
+		$$.val = &compressType
+	}
+| /* EMPTY */ { $$.val = (*string)(nil) }
+
 
 alter_index_cmds:
   alter_index_cmd
@@ -6221,15 +6244,16 @@ col_qualification:
 	}
 | COMPRESS non_reserved_word_or_sconst opt_compress_level
 	{
-		$$.val = tree.NamedColumnQualification{Qualification: &tree.ColumnCompress{CompressType: $2, CompressLevel: $3.compressLevel()}}
+		$$.val = tree.NamedColumnQualification{Qualification: &tree.ColumnCompress{CompressType: $2, CompressLevel: $3.strPtr()}}
 	}
 
 opt_compress_level:
 	LEVEL non_reserved_word_or_sconst
 	{
-		$$.val = &tree.CompressLevel{CompressLevel: $2}
+		compressLevel := $2
+		$$.val = &compressLevel
 	}
-| /* EMPTY */ { $$.val = (*tree.CompressLevel)(nil) }
+| /* EMPTY */ { $$.val = (*string)(nil) }
 
 // DEFAULT NULL is already the default for Postgres. But define it here and
 // carry it forward into the system to make it explicit.
@@ -13425,6 +13449,7 @@ unreserved_keyword:
 | MILLISECOND
 | MINUTE
 | MINVALUE
+| MODIFY
 | MON
 | MONTH
 | MS

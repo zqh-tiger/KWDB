@@ -435,8 +435,8 @@ type ColumnTableDef struct {
 		EncodeType *string
 	}
 	ColumnCompress struct {
-		CompressType *string
-		*CompressLevel
+		CompressType  *string
+		CompressLevel *string
 	}
 }
 
@@ -554,8 +554,16 @@ func NewColumnTableDef(
 			}
 			d.Comment = string(t)
 		case *ColumnEncode:
+			if d.ColumnEncode.EncodeType != nil {
+				return nil, pgerror.Newf(pgcode.Syntax,
+					"multiple encode type specified for column %q", name)
+			}
 			d.ColumnEncode.EncodeType = &t.EncodeType
 		case *ColumnCompress:
+			if d.ColumnCompress.CompressType != nil {
+				return nil, pgerror.Newf(pgcode.Syntax,
+					"multiple compress type specified for column %q", name)
+			}
 			d.ColumnCompress.CompressType = &t.CompressType
 			d.ColumnCompress.CompressLevel = t.CompressLevel
 		default:
@@ -692,7 +700,7 @@ func (node *ColumnTableDef) Format(ctx *FmtCtx) {
 		ctx.WriteString(*node.ColumnCompress.CompressType)
 		if node.ColumnCompress.CompressLevel != nil {
 			ctx.WriteString(" LEVEL ")
-			ctx.WriteString(node.ColumnCompress.CompressLevel.CompressLevel)
+			ctx.WriteString(*node.ColumnCompress.CompressLevel)
 		}
 	}
 }
@@ -758,13 +766,8 @@ type ColumnEncode struct {
 
 // ColumnCompress represents compress type on a column
 type ColumnCompress struct {
-	CompressType string
-	*CompressLevel
-}
-
-// CompressLevel represents compress level on a column
-type CompressLevel struct {
-	CompressLevel string
+	CompressType  string
+	CompressLevel *string
 }
 
 // NotNullConstraint represents NOT NULL on a column.

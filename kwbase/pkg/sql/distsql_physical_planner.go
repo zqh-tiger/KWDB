@@ -3032,7 +3032,8 @@ func (dsp *DistSQLPlanner) createTSDDL(planCtx *PlanningCtx, n *tsDDLNode) (Phys
 		//	}
 		//	proc.Spec.Core = execinfrapb.ProcessorCoreUnion{TsPro: tsDrop}
 		//	p.TsOperator = tsDrop.TsOperator
-		case alterKwdbAddTag, alterKwdbAddColumn, alterKwdbDropTag, alterKwdbDropColumn, alterKwdbAlterTagType, alterKwdbAlterColumnType:
+		case alterKwdbAddTag, alterKwdbAddColumn, alterKwdbDropTag, alterKwdbDropColumn,
+			alterKwdbAlterTagType, alterKwdbAlterColumnType, modifyColumnCompress:
 			var tsAlterColumn = &execinfrapb.TsAlterProSpec{}
 			col := n.d.AlterTag
 			tsColumn := sqlbase.KWDBKTSColumn{
@@ -3044,12 +3045,9 @@ func (dsp *DistSQLPlanner) createTSDDL(planCtx *PlanningCtx, n *tsDDLNode) (Phys
 				VariableLengthType: col.TsCol.VariableLengthType,
 				ColType:            col.TsCol.ColumnType,
 			}
-			colMeta, err := protoutil.Marshal(&tsColumn)
-			if err != nil {
-				panic(err.Error())
-			}
+			makeCompressInfo(&tsColumn, col)
 			switch n.d.Type {
-			case alterKwdbAlterTagType, alterKwdbAlterColumnType:
+			case alterKwdbAlterTagType, alterKwdbAlterColumnType, modifyColumnCompress:
 				oriCol := n.d.OriginColumn
 				oriTSCol := sqlbase.KWDBKTSColumn{
 					ColumnId:           uint32(oriCol.ID),
@@ -3060,16 +3058,22 @@ func (dsp *DistSQLPlanner) createTSDDL(planCtx *PlanningCtx, n *tsDDLNode) (Phys
 					VariableLengthType: oriCol.TsCol.VariableLengthType,
 					ColType:            oriCol.TsCol.ColumnType,
 				}
+				makeCompressInfo(&oriTSCol, oriCol)
 				oriColMeta, err := protoutil.Marshal(&oriTSCol)
 				if err != nil {
 					panic(err.Error())
 				}
 				tsAlterColumn.OriginalCol = oriColMeta
+				if n.d.Type == modifyColumnCompress {
+					tsColumn.AlterType = sqlbase.KWDBAlterType_KW_ALTER_COLUMN_COMPRESS_INFO
+				} else {
+					tsColumn.AlterType = sqlbase.KWDBAlterType_KW_ALTER_COLUMN_TYPE
+				}
 			}
 			switch n.d.Type {
 			case alterKwdbAddTag, alterKwdbAddColumn:
 				tsAlterColumn.TsOperator = execinfrapb.OperatorType_TsAddColumn
-			case alterKwdbAlterColumnType, alterKwdbAlterTagType:
+			case alterKwdbAlterColumnType, alterKwdbAlterTagType, modifyColumnCompress:
 				tsAlterColumn.TsOperator = execinfrapb.OperatorType_TsAlterType
 			default:
 				tsAlterColumn.TsOperator = execinfrapb.OperatorType_TsDropColumn
@@ -3081,7 +3085,10 @@ func (dsp *DistSQLPlanner) createTSDDL(planCtx *PlanningCtx, n *tsDDLNode) (Phys
 			if n.txnEvent == txnCommit {
 				tsAlterColumn.TsOperator = execinfrapb.OperatorType_TsCommit
 			}
-
+			colMeta, err := protoutil.Marshal(&tsColumn)
+			if err != nil {
+				panic(err.Error())
+			}
 			tsAlterColumn.Column = colMeta
 			tsAlterColumn.TsTableID = uint64(n.d.SNTable.ID)
 			tsAlterColumn.NextTSVersion = uint32(n.d.SNTable.TsTable.GetNextTsVersion())

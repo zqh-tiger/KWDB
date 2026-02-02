@@ -1826,7 +1826,7 @@ func checkAndMakeTSColDesc(
 	if err != nil {
 		return nil, err
 	}
-	if err = checkColumnCompress(d, *col); err != nil {
+	if err = checkColumnCompress(d.ColumnEncode.EncodeType, d.ColumnCompress.CompressType, d.ColumnCompress.CompressLevel, *col); err != nil {
 		return nil, err
 	}
 	if isFirstTSCol {
@@ -1844,48 +1844,48 @@ func checkAndMakeTSColDesc(
 }
 
 // checkColumnCompress checks whether the encode type and compress type are valid.
-func checkColumnCompress(d *tree.ColumnTableDef, col *sqlbase.ColumnDescriptor) error {
-	if d.ColumnEncode.EncodeType != nil {
-		encodeType := strings.ToLower(*d.ColumnEncode.EncodeType)
-		if encodeType != "disabled" {
+func checkColumnCompress(encodeType *string, compressType *string, compressLevel *string, col *sqlbase.ColumnDescriptor) error {
+	if encodeType != nil {
+		enType := strings.ToLower(*encodeType)
+		if enType != "disabled" {
 			switch col.Type.Oid() {
 			case oid.T_int2, oid.T_int4, oid.T_int8, oid.T_timestamp, oid.T_timestamptz:
-				if encodeType != "simple8b" {
-					return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), encodeType)
+				if enType != "simple8b" {
+					return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), enType)
 				}
 			case oid.T_float4, oid.T_float8:
-				if encodeType != "chimp" {
-					return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), encodeType)
+				if enType != "chimp" {
+					return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), enType)
 				}
 			case oid.T_bool:
-				if encodeType != "bit-packing" {
-					return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), encodeType)
+				if enType != "bit-packing" {
+					return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), enType)
 				}
 			default:
 				return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), encodeType)
 			}
 		}
-		col.TsCol.EncodeType = &encodeType
+		col.TsCol.EncodeType = &enType
 	}
-	if d.ColumnCompress.CompressType != nil {
-		compressType := strings.ToLower(*d.ColumnCompress.CompressType)
-		switch compressType {
+	if compressType != nil {
+		cpType := strings.ToLower(*compressType)
+		switch cpType {
 		case "lz4", "zlib", "lzma", "snappy", "disabled":
-			col.TsCol.CompressType = &compressType
+			col.TsCol.CompressType = &cpType
 		default:
-			return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support compress type %s", col.Type.Name(), compressType)
+			return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support compress type %s", col.Type.Name(), cpType)
 		}
-		if d.ColumnCompress.CompressLevel != nil {
-			if compressType == "disabled" {
-				return pgerror.New(pgcode.FeatureNotSupported, "can not set level when compress type is disabled")
-			}
-			compressLevel := strings.ToLower(d.ColumnCompress.CompressLevel.CompressLevel)
-			switch compressLevel {
-			case "low", "medium", "high", "l", "m", "h":
-				col.TsCol.CompressLevel = &compressLevel
-			default:
-				return pgerror.Newf(pgcode.FeatureNotSupported, "compress level %s is not supported", compressLevel)
-			}
+	}
+	if compressLevel != nil {
+		if col.TsCol.CompressType != nil && *col.TsCol.CompressType == "disabled" {
+			return pgerror.New(pgcode.FeatureNotSupported, "can not set level when compress type is disabled")
+		}
+		cpLevel := strings.ToLower(*compressLevel)
+		switch cpLevel {
+		case "low", "medium", "high", "l", "m", "h":
+			col.TsCol.CompressLevel = &cpLevel
+		default:
+			return pgerror.Newf(pgcode.FeatureNotSupported, "compress level %s is not supported", cpLevel)
 		}
 	}
 	return nil
