@@ -919,6 +919,17 @@ CompressorManager::CompressorManager() {
   // 2. construct encoding algorithms.
   ts_comp_[TsCompAlg::kGorilla_32] = &ConcreateTsCompressor<GorillaIntV2<int32_t>>::GetInstance();
   ts_comp_[TsCompAlg::kGorilla_64] = &ConcreateTsCompressor<GorillaIntV2<int64_t>>::GetInstance();
+
+  ts_comp_[TsCompAlg::kSimple8B_s8] = &ConcreateTsCompressor<Simple8BInt<int8_t>>::GetInstance();
+  ts_comp_[TsCompAlg::kSimple8B_s16] = &ConcreateTsCompressor<Simple8BInt<int16_t>>::GetInstance();
+  ts_comp_[TsCompAlg::kSimple8B_s32] = &ConcreateTsCompressor<Simple8BInt<int32_t>>::GetInstance();
+  ts_comp_[TsCompAlg::kSimple8B_s64] = &ConcreateTsCompressor<Simple8BInt<int64_t>>::GetInstance();
+  ts_comp_[TsCompAlg::kSimple8B_u8] = &ConcreateTsCompressor<Simple8BInt<uint8_t>>::GetInstance();
+  ts_comp_[TsCompAlg::kSimple8B_u16] = &ConcreateTsCompressor<Simple8BInt<uint16_t>>::GetInstance();
+  ts_comp_[TsCompAlg::kSimple8B_u32] = &ConcreateTsCompressor<Simple8BInt<uint32_t>>::GetInstance();
+  ts_comp_[TsCompAlg::kSimple8B_u64] = &ConcreateTsCompressor<Simple8BInt<uint64_t>>::GetInstance();
+
+
   ts_comp_[TsCompAlg::kSimple8B_V2_s8] = &ConcreateTsCompressor<Simple8BIntV2<int8_t>>::GetInstance();
   ts_comp_[TsCompAlg::kSimple8B_V2_s16] = &ConcreateTsCompressor<Simple8BIntV2<int16_t>>::GetInstance();
   ts_comp_[TsCompAlg::kSimple8B_V2_s32] = &ConcreateTsCompressor<Simple8BIntV2<int32_t>>::GetInstance();
@@ -935,6 +946,7 @@ CompressorManager::CompressorManager() {
   // construct general compression algorithms
   general_compressor_[GenCompAlg::kSnappy] = &ConcreateGenCompressor<SnappyString>::GetInstance();
   general_compressor_[GenCompAlg::kLz4] = &ConcreateGenCompressor<LZ4String>::GetInstance();
+  general_compressor_[GenCompAlg::kZstd] = &ConcreateGenCompressor<ZSTDString>::GetInstance();
 
 
   // varchar varstring

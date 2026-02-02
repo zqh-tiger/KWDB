@@ -198,11 +198,11 @@ if (NOT BRPC_FOUND)
       BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/third_party/brpc-${BRPC_VERSION}/build"
       LIST_SEPARATOR ","
       CMAKE_ARGS
-        -S "${PROJECT_SOURCE_DIR}/third_party/brpc-${BRPC_VERSION}" 
-        -B "${CMAKE_CURRENT_BINARY_DIR}/third_party/brpc-${BRPC_VERSION}/build" 
+        -S "${PROJECT_SOURCE_DIR}/third_party/brpc-${BRPC_VERSION}"
+        -B "${CMAKE_CURRENT_BINARY_DIR}/third_party/brpc-${BRPC_VERSION}/build"
         -DCMAKE_INSTALL_LIBDIR=lib
-        -DCMAKE_BUILD_TYPE=Release 
-        -DWITH_DEBUG_SYMBOLS=OFF 
+        -DCMAKE_BUILD_TYPE=Release
+        -DWITH_DEBUG_SYMBOLS=OFF
         -DDOWNLOAD_GTEST=OFF
         -DBUILD_BRPC_TOOLS=OFF
         -DCMAKE_PREFIX_PATH=${NATIVE}/kwdbts2/third_party

@@ -56,6 +56,7 @@ class CompressorImpl {
   void operator=(const CompressorImpl &) = delete;
   virtual bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const = 0;
   virtual bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const = 0;
+  // GetUncompressedSize just for test! If used in other scenarios, further modifications are needed.
   virtual size_t GetUncompressedSize(TSSlice data, uint64_t count) const = 0;
 };
 
@@ -215,14 +216,6 @@ class SnappyString : public CompressorImpl {
 class LZ4String : public CompressorImpl {
   private:
     LZ4String() = default;
-    // LZ4_stream_t a;
-    class BufferSink : public snappy::Sink {
-      TsBufferBuilder *out_;
-
-      public:
-        explicit BufferSink(TsBufferBuilder *out) : out_(out) {}
-        void Append(const char *bytes, size_t n) override { out_->append({bytes, n}); }
-    };
 
   public:
     static constexpr int stride = -1;
@@ -230,39 +223,105 @@ class LZ4String : public CompressorImpl {
       static LZ4String inst;
       return inst;
     }
+
     bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const override {
-      size_t com_space_size  = LZ4_compressBound(data.len);
-      char* com_ptr = static_cast<char*>(malloc(com_space_size));
-      if (com_space_size != 0) {
-        LZ4_compress_fast(data.data, com_ptr, data.len, com_space_size, 1/* need read from compress level */);
+      int dst_capacity  = LZ4_compressBound(data.len);
+      std::vector<char> compressed(dst_capacity);
+      if (dst_capacity != 0) {
+        int compressed_size = LZ4_compress_fast(data.data, compressed.data(), data.len, dst_capacity, 1/* need read from compress level */);
+        if (compressed_size == 0) {
+          LOG_ERROR("LZ4 Compress Failed!");
+          out->append(data);
+          return false;
+        }
+        // Write the original data length
+        PutFixed64(out, data.len);
+        out->append(compressed.data(), compressed_size);
+        return true;
       }
-
-      // out->clear();
-      // snappy::ByteArraySource src(data.data, data.len);
-      // BufferSink sink(out);
-      // snappy::Compress(&src, &sink);
-      return true;
+      LOG_ERROR("LZ4 Compress Failed! Input size is incorrect (too large or negative).");
+      return false;
     }
+
     bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override {
-      // TODO(qinlipeng):
-      TsBufferBuilder builder;
-      BufferSink sink(&builder);
-
-      snappy::ByteArraySource src(data.data, data.len);
-      bool ok = snappy::Uncompress(&src, &sink);
-      if (!ok) {
-        return false;
+      // Read the original data length
+      uint64_t org_size = DecodeFixed64(data.data);
+      TsBufferBuilder builder(org_size);
+      if (org_size != 0) {
+        int ret_size = LZ4_decompress_safe(data.data + 8, builder.data(), data.len - 8, org_size);
+        if (ret_size != org_size) {
+          LOG_ERROR("LZ4 Decompress Failed!");
+          builder.assign(data.data, data.len);
+          *out = builder.GetBuffer();
+          return false;
+        }
+        *out = builder.GetBuffer();
+        return true;
       }
-      *out = builder.GetBuffer();
-      return true;
+      LOG_ERROR("LZ4 Decompress Failed! Incorrect original data size.")
+      return false;
     }
+
     size_t GetUncompressedSize(TSSlice data, uint64_t count) const override {
-      size_t result;
-      bool ok = snappy::GetUncompressedLength(data.data, data.len, &result);
-      if (ok) {
-        return result;
+      uint64_t org_size = DecodeFixed64(data.data);
+      return org_size == 0 ? -1 : org_size;
+    }
+};
+
+// ZSTD
+class ZSTDString : public CompressorImpl {
+  private:
+    ZSTDString() = default;
+
+  public:
+    static constexpr int stride = -1;
+    static ZSTDString &GetInstance() {
+      static ZSTDString inst;
+      return inst;
+    }
+
+    bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const override {
+
+      size_t dst_capacity  = ZSTD_compressBound(data.len);
+      std::vector<char> compressed(dst_capacity);
+      if (dst_capacity != 0) {
+        size_t compressed_size = ZSTD_compress(compressed.data(), dst_capacity, data.data, data.len, 1/* need read from compress level */);
+        if (ZSTD_isError(compressed_size)) {
+          LOG_ERROR("ZSTD Compress Failed!");
+          out->append(data);
+          return false;
+        }
+        // Write the original data length
+        PutFixed64(out, data.len);
+        out->append(compressed.data(), compressed_size);
+        return true;
       }
-      return -1;
+      LOG_ERROR("ZSTD Compress Failed! Input size is incorrect (too large or negative).");
+      return false;
+    }
+
+    bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override {
+      // Read the original data length
+      uint64_t org_size = DecodeFixed64(data.data);
+      TsBufferBuilder builder(org_size);
+      if (org_size != 0) {
+        size_t ret_size = ZSTD_decompress(builder.data(), org_size, data.data + 8, data.len - 8);
+        if (ZSTD_isError(ret_size) || ret_size != org_size) {
+          LOG_ERROR("ZSTD Decompress Failed!");
+          builder.assign(data.data, data.len);
+          *out = builder.GetBuffer();
+          return false;
+        }
+        *out = builder.GetBuffer();
+        return true;
+      }
+      LOG_ERROR("ZSTD Decompress Failed! Incorrect original data size.")
+      return false;
+    }
+
+    size_t GetUncompressedSize(TSSlice data, uint64_t count) const override {
+      uint64_t org_size = DecodeFixed64(data.data);
+      return org_size == 0 ? -1 : org_size;
     }
 };
 

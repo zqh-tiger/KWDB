@@ -116,6 +116,52 @@ enum class DedupRule {
   MERGE = 4,     // duplicate by column
 };
 
+enum class TsCompAlg : uint16_t {
+  kPlain = 0,
+  kGorilla_32 = 1,
+  kGorilla_64 = 2,
+  kSimple8B_s8 = 3,
+  kSimple8B_s16 = 4,
+  kSimple8B_s32 = 5,
+  kSimple8B_s64 = 6,
+  kSimple8B_u8 = 7,
+  kSimple8B_u16 = 8,
+  kSimple8B_u32 = 9,
+  kSimple8B_u64 = 10,
+
+  kChimp_32 = 11,
+  kChimp_64 = 12,
+  // kALP,
+  // kELF,
+
+  kSimple8B_V2_s8 = 13,
+  kSimple8B_V2_s16 = 14,
+  kSimple8B_V2_s32 = 15,
+  kSimple8B_V2_s64 = 16,
+  kSimple8B_V2_u8 = 17,
+  kSimple8B_V2_u16 = 18,
+  kSimple8B_V2_u32 = 19,
+  kSimple8B_V2_u64 = 20,
+
+  kBitPacking = 21,
+
+  TS_COMP_ALG_LAST
+};
+
+// compression algorithms for general purpose.
+enum class GenCompAlg : uint16_t {
+  kPlain = 0,
+  kSnappy = 1,
+  kGzip = 2,
+  kLzo = 3,
+  kLz4 = 4,
+  kXz = 5,
+  kZstd = 6,
+  kLzma = 7,
+  kZlib = 8,
+  GEN_COMP_ALG_LAST
+};
+
 enum SortOrder {
   ASC = 0,
   DESC,
