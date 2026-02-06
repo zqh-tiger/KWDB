@@ -391,11 +391,57 @@ ExternalProject_Add(
 set(SNAPPY_INCLUDE ${SNAPPY_INSTALL_DIR}/include)
 set(SNAPPY_LIB ${SNAPPY_INSTALL_DIR}/lib/libsnappy.a)
 
+# === zstd 配置（本地源码 + 多线程支持）===
+set(ZSTD_SOURCE_DIR      ${CMAKE_CURRENT_LIST_DIR}/third_party/zstd-1.5.7)
+set(ZSTD_INSTALL_PREFIX  ${THIRD_PARTY_DIR}/zstd-install)
+
+set(ZSTD_INCLUDE_DIR ${ZSTD_INSTALL_PREFIX}/include)
+set(ZSTD_STATIC_LIB  ${ZSTD_INSTALL_PREFIX}/lib/libzstd.a)
+
+file(MAKE_DIRECTORY ${ZSTD_INCLUDE_DIR})
+file(MAKE_DIRECTORY ${ZSTD_INSTALL_PREFIX}/lib)
+
+ExternalProject_Add(
+        zstd_external
+        SOURCE_DIR       ${ZSTD_SOURCE_DIR}
+        PREFIX       ${THIRD_PARTY_DIR}/zstd-build
+        CONFIGURE_COMMAND ""
+        BUILD_COMMAND
+        ${CMAKE_MAKE_PROGRAM} -C ${ZSTD_SOURCE_DIR}/lib
+        -j${NPROC}
+        libzstd.a
+        CC=${CMAKE_C_COMPILER}
+        CXX=${CMAKE_CXX_COMPILER}
+        AR=${CMAKE_AR}
+        # 注意：zstd 的 Makefile 自动检测 pthread，无需额外定义
+        INSTALL_COMMAND
+        COMMAND
+        ${CMAKE_COMMAND} -E copy ${ZSTD_SOURCE_DIR}/lib/zstd.h ${ZSTD_INCLUDE_DIR}/
+        COMMAND
+        ${CMAKE_COMMAND} -E copy ${ZSTD_SOURCE_DIR}/lib/zstd_errors.h ${ZSTD_INCLUDE_DIR}/
+#        COMMAND
+#        ${CMAKE_COMMAND} -E copy ${ZSTD_SOURCE_DIR}/lib/zstdmt_compress.h ${ZSTD_INCLUDE_DIR}/
+        COMMAND
+        ${CMAKE_COMMAND} -E copy ${ZSTD_SOURCE_DIR}/lib/libzstd.a ${ZSTD_STATIC_LIB}
+        BUILD_IN_SOURCE 0
+        LOG_BUILD        ON
+        LOG_INSTALL      ON
+)
+
+# 导入静态库
+add_library(zstd STATIC IMPORTED GLOBAL)
+set_property(TARGET zstd PROPERTY IMPORTED_LOCATION ${ZSTD_STATIC_LIB})
+set_property(TARGET zstd PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${ZSTD_INCLUDE_DIR})
+
+add_dependencies(zstd zstd_external)
+
+
 # include file of kwdbts2
 set(TS_INCLUDE
         ../common/src/h
         ../common/src/include
         third_party/gtest-1.8.1/fused-src
+        third_party/zstd-1.5.7/lib
         ${NATIVE}/kwdbts2/third_party/include
         include
         roachpb
@@ -407,6 +453,7 @@ set(TS_INCLUDE
         exec/include
         statistic/include
         ${SNAPPY_INCLUDE}
+        ${ZSTD_INCLUDE_DIR}
         brpc/include
         )
 if (NOT KWBASE_OSS)
@@ -469,10 +516,10 @@ endif()
 if (NOT LZ4_FOUND OR USE_SOURCE)
   add_dependencies(${KWDBTS2_SERVER_LIB} lz4_src)
 endif()
-add_dependencies(${KWDBTS2_SERVER_LIB} snappy)
+add_dependencies(${KWDBTS2_SERVER_LIB} snappy zstd)
 
 # Set brpc library dependency
-target_link_libraries(${KWDBTS2_SERVER_LIB} PRIVATE ${BRPC_STATIC_LIB} libssl.a libcrypto.a ${SNAPPY_LIB} ${LZ4_STATIC_LIB} ${GFLAGS_STATIC_LIB} ${PROTOBUF_STATIC_LIB})
+target_link_libraries(${KWDBTS2_SERVER_LIB} PRIVATE ${BRPC_STATIC_LIB} libssl.a libcrypto.a ${SNAPPY_LIB} ${LZ4_STATIC_LIB} ${GFLAGS_STATIC_LIB} ${PROTOBUF_STATIC_LIB} ${ZSTD_STATIC_LIB})
 
 # Import the header files required by the server module
 target_include_directories(${KWDBTS2_SERVER_LIB} PRIVATE

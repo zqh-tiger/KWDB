@@ -216,6 +216,16 @@ func (n *alterTableNode) startExec(params runParams) error {
 				if err != nil {
 					return err
 				}
+				colDef := t.ColumnDef
+				if colDef.ColumnEncode.EncodeType == nil && colDef.ColumnCompress.CompressType == nil &&
+					colDef.ColumnCompress.CompressLevel == nil {
+					return pgerror.Newf(pgcode.Syntax, "modify column without any compress parameters")
+				}
+
+				if err = checkColumnCompress(colDef.ColumnEncode.EncodeType, colDef.ColumnCompress.CompressType,
+					colDef.ColumnCompress.CompressLevel, TSColumn); err != nil {
+					return err
+				}
 				n.tableDesc.AddColumnMutation(TSColumn, sqlbase.DescriptorMutation_ADD)
 				// Allocate IDs now, so new IDs are available to subsequent commands
 				if err := n.tableDesc.AllocateIDs(); err != nil {

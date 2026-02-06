@@ -656,6 +656,69 @@ TEST(LZ4, CompressDecompress) {
   EXPECT_EQ(origin.AsStringView(), s);
 }
 
+TEST(zstd, CompressDecompress) {
+  const kwdbts::CompressorImpl &comp = kwdbts::ZSTDString::GetInstance();
+  std::string s;
+  s.resize(8192);
+  char str[] = "WhAtEvEr!!!";
+  for (int i = 0; i < s.size(); ++i) {
+    s[i] = str[i % sizeof(str)];
+  }
+  kwdbts::TsBufferBuilder out;
+  ASSERT_TRUE(comp.Compress({s.data(), s.size()}, 0, &out));
+
+  EXPECT_LT(out.size(), s.size());
+
+  kwdbts::TsSliceGuard origin;
+  ASSERT_TRUE(comp.Decompress({out.data(), out.size()}, 0, &origin));
+  size_t origin_size = comp.GetUncompressedSize({out.data(), out.size()}, 0);
+  ASSERT_EQ(origin_size, s.size());
+
+  EXPECT_EQ(origin.AsStringView(), s);
+}
+
+// TEST(zlib, CompressDecompress) {
+//   const kwdbts::CompressorImpl &comp = kwdbts::ZLIBString::GetInstance();
+//   std::string s;
+//   s.resize(8192);
+//   char str[] = "WhAtEvEr!!!";
+//   for (int i = 0; i < s.size(); ++i) {
+//     s[i] = str[i % sizeof(str)];
+//   }
+//   kwdbts::TsBufferBuilder out;
+//   ASSERT_TRUE(comp.Compress({s.data(), s.size()}, 0, &out));
+//
+//   EXPECT_LT(out.size(), s.size());
+//
+//   kwdbts::TsSliceGuard origin;
+//   ASSERT_TRUE(comp.Decompress({out.data(), out.size()}, 0, &origin));
+//   size_t origin_size = comp.GetUncompressedSize({out.data(), out.size()}, 0);
+//   ASSERT_EQ(origin_size, s.size());
+//
+//   EXPECT_EQ(origin.AsStringView(), s);
+// }
+//
+// TEST(lzma, CompressDecompress) {
+//   const kwdbts::CompressorImpl &comp = kwdbts::LZMAString::GetInstance();
+//   std::string s;
+//   s.resize(8192);
+//   char str[] = "WhAtEvEr!!!";
+//   for (int i = 0; i < s.size(); ++i) {
+//     s[i] = str[i % sizeof(str)];
+//   }
+//   kwdbts::TsBufferBuilder out;
+//   ASSERT_TRUE(comp.Compress({s.data(), s.size()}, 0, &out));
+//
+//   EXPECT_LT(out.size(), s.size());
+//
+//   kwdbts::TsSliceGuard origin;
+//   ASSERT_TRUE(comp.Decompress({out.data(), out.size()}, 0, &origin));
+//   size_t origin_size = comp.GetUncompressedSize({out.data(), out.size()}, 0);
+//   ASSERT_EQ(origin_size, s.size());
+//
+//   EXPECT_EQ(origin.AsStringView(), s);
+// }
+
 // Float & Double
 template<class T>
 class FloatingPointCompressorTester : public ::testing::Test {};
