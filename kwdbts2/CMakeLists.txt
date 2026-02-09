@@ -435,6 +435,75 @@ set_property(TARGET zstd PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${ZSTD_INCLUDE_D
 
 add_dependencies(zstd zstd_external)
 
+# 设置 zlib 构建相关路径
+set(ZLIB_SOURCE_DIR      ${CMAKE_CURRENT_LIST_DIR}/third_party/zlib-1.3.1)
+set(ZLIB_INSTALL_PREFIX  ${THIRD_PARTY_DIR}/zstd-install)
+
+set(ZLIB_INCLUDE_DIR ${ZLIB_INSTALL_PREFIX}/include)
+set(ZLIB_STATIC_LIB  ${ZLIB_INSTALL_PREFIX}/lib/libzlib.a)
+file(MAKE_DIRECTORY ${ZLIB_INCLUDE_DIR})
+file(MAKE_DIRECTORY ${ZLIB_INSTALL_PREFIX}/lib)
+
+# 使用 ExternalProject_Add 添加 zlib
+ExternalProject_Add(
+        zlib_external
+        SOURCE_DIR ${ZLIB_SOURCE_DIR}
+        PREFIX       ${THIRD_PARTY_DIR}/zlib-build
+        CMAKE_ARGS
+        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -DCMAKE_INSTALL_PREFIX=${ZLIB_INSTALL_PREFIX}
+        -DBUILD_SHARED_LIBS=OFF
+#        -DCMAKE_POSITION_INDEPENDENT_CODE=ON  # 若你的项目需要 PIC（如用于共享库）
+
+        # 禁用不必要的步骤
+        UPDATE_DISCONNECTED 1
+        LOG_DOWNLOAD ON
+        LOG_CONFIGURE ON
+        LOG_BUILD ON
+)
+
+# 创建一个导入库目标（IMPORTED），方便链接
+add_library(zlib STATIC IMPORTED GLOBAL)
+set_property(TARGET zlib PROPERTY IMPORTED_LOCATION ${ZLIB_STATIC_LIB})
+set_property(TARGET zlib PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${ZLIB_INCLUDE_DIR})
+
+# 声明依赖：确保在构建 my_app 前先构建 zlib
+add_dependencies(zlib zlib_external)
+
+# 设置 zlib 构建相关路径
+set(LZMA_SOURCE_DIR      ${CMAKE_CURRENT_LIST_DIR}/third_party/xz-5.8.2)
+set(LZMA_INSTALL_PREFIX  ${THIRD_PARTY_DIR}/lzma-install)
+
+set(LZMA_INCLUDE_DIR ${LZMA_INSTALL_PREFIX}/include)
+set(LZMA_STATIC_LIB  ${LZMA_INSTALL_PREFIX}/lib/liblzma.a)
+file(MAKE_DIRECTORY ${LZMA_INCLUDE_DIR})
+file(MAKE_DIRECTORY ${LZMA_INSTALL_PREFIX}/lib)
+
+# 使用 ExternalProject_Add 添加 zlib
+ExternalProject_Add(
+        lzma_external
+        SOURCE_DIR ${LZMA_SOURCE_DIR}
+        PREFIX       ${THIRD_PARTY_DIR}/lzma-build
+        CMAKE_ARGS
+        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
+        -DCMAKE_INSTALL_PREFIX=${LZMA_INSTALL_PREFIX}
+        -DBUILD_SHARED_LIBS=OFF
+        #        -DCMAKE_POSITION_INDEPENDENT_CODE=ON  # 若你的项目需要 PIC（如用于共享库）
+
+        # 禁用不必要的步骤
+#        UPDATE_DISCONNECTED 1
+#        LOG_DOWNLOAD ON
+#        LOG_CONFIGURE ON
+#        LOG_BUILD ON
+)
+
+# 创建一个导入库目标（IMPORTED），方便链接
+add_library(lzma STATIC IMPORTED GLOBAL)
+set_property(TARGET lzma PROPERTY IMPORTED_LOCATION ${LZMA_STATIC_LIB})
+set_property(TARGET lzma PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${LZMA_INCLUDE_DIRS})
+
+# 声明依赖：确保在构建 my_app 前先构建 zlib
+add_dependencies(lzma lzma_external)
 
 # include file of kwdbts2
 set(TS_INCLUDE
