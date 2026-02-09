@@ -181,7 +181,6 @@ func (p *planner) checkTableUsedByStream(
 			*tree.AlterTableRenameColumn,
 			tree.ColumnMutationCmd,
 			*tree.AlterTableAlterTagType,
-			*tree.AlterTableModifyCompress,
 			*tree.AlterTableDropTag,
 			*tree.AlterTableRenameTag:
 			typ = typeAlterStreamTable

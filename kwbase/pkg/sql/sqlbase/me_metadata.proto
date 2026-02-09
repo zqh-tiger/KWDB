@@ -267,7 +267,6 @@ message KWDBKTSColumn {
   optional ColumnEncodeType encode_type = 11 [(gogoproto.nullable) = false];
   optional ColumnCompressType compress_type = 12 [(gogoproto.nullable) = false];
   optional ColumnCompressLevel compress_level = 13 [(gogoproto.nullable) = false];
-  optional KWDBAlterType alter_type = 14 [(gogoproto.nullable) = false];
 }
 
 // NTagHashIndexInfo

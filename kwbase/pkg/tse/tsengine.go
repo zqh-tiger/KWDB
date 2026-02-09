@@ -793,6 +793,8 @@ func (r *TsEngine) AlterTSColumnType(
 	transactionID []byte,
 	colMeta []byte,
 	originColMeta []byte,
+	isAlterType bool,
+	isAlterCompress bool,
 ) error {
 	r.checkOrWaitForOpen()
 	status := C.TSAlterColumn(

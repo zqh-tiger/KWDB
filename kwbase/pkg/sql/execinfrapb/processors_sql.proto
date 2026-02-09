@@ -184,7 +184,6 @@ enum OperatorType {
   TsAlterTagIndex = 22;
   TsAlterRetentions = 23;
   TsManualVacuum = 24;
-  TsAlterCompressInfo = 25;
 }
 
 // TsInsertSelSpec build payLoads for TsInsert
@@ -282,6 +281,8 @@ message TsAlterProSpec {
   optional uint32 tagIndexID = 11 [(gogoproto.nullable) = false];
   repeated uint32 tagIndexColumns = 12;
   optional uint64 retentions = 13 [(gogoproto.nullable) = false];
+  optional bool is_alter_type = 14 [(gogoproto.nullable) = false];
+  optional bool is_alter_compress = 15 [(gogoproto.nullable) = false];
 }
 
 // IndexSkipTableReaderSpec is the specification for a table reader that

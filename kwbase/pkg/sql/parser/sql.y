@@ -753,7 +753,7 @@ func (u *sqlSymUnion) triggerBody() tree.TriggerBody {
 %token <str> LOCALTIME LOCALTIMESTAMP LOCATION LOCKED LOGIN LOOKUP LOOP LOW LSHIFT
 %token <str> ACTIVETIME LUA
 
-%token <str> M MATCH MATERIALIZED MB MEMCAPACITY MEMORY MERGE MICROSECOND MILLISECOND MINVALUE MAXVALUE MINUTE MODIFY MON MONTH MS
+%token <str> M MATCH MATERIALIZED MB MEMCAPACITY MEMORY MERGE MICROSECOND MILLISECOND MINVALUE MAXVALUE MINUTE MON MONTH MS
 
 %token <str> NAN NAME NAMES NANOSECOND NATURAL NCHAR NEVER NEXT NO NOCREATEROLE NOLOGIN NO_INDEX_JOIN
 %token <str> NONE NORMAL NOT NOTHING NOTNULL NOWAIT NS NULL NULLIF NULLS NUMERIC NVARCHAR
@@ -1266,6 +1266,7 @@ func (u *sqlSymUnion) triggerBody() tree.TriggerBody {
 %type <*types.T> character_base
 %type <*types.T> postgres_oid
 %type <*types.T> cast_target
+%type <*types.T> opt_alter_type
 %type <str> extract_arg
 %type <bool> opt_varying
 %type <bool> audit_able
@@ -2009,13 +2010,19 @@ alter_table_cmd:
   //     [SET DATA] TYPE <typename>
   //     [ COLLATE collation ]
   //     [ USING <expression> ]
-| ALTER opt_column column_name opt_set_data TYPE typename opt_collate opt_alter_column_using
+  //		 [ ENCODE <encode_type> ]
+  //	   [ COMPRESS <compress_type> ]
+  //     [ LEVEL <compress_level> ]
+| ALTER opt_column column_name opt_set_data opt_alter_type opt_collate opt_alter_column_using opt_encode_type opt_compress_type opt_compress_level
   {
     $$.val = &tree.AlterTableAlterColumnType{
       Column: tree.Name($3),
-      ToType: $6.colType(),
-      Collation: $7,
-      Using: $8.expr(),
+      ToType: $5.colType(),
+      Collation: $6,
+      Using: $7.expr(),
+			EncodeType:		 $8.strPtr(),
+			CompressType:  $9.strPtr(),
+			CompressLevel: $10.strPtr(),
     }
   }
 | ALTER attribute_tag attribute_name opt_set_data TYPE typename
@@ -2121,15 +2128,6 @@ alter_table_cmd:
   	  TimeInput: $4.timeInput(),
   	}
   }
-| MODIFY COLUMN column_name opt_encode_type opt_compress_type opt_compress_level
-	{
-		$$.val = &tree.AlterTableModifyCompress{
-				Column:        tree.Name($3),
-      	EncodeType:		 $4.strPtr(),
-      	CompressType:  $5.strPtr(),
-      	CompressLevel: $6.strPtr(),
-		}
-	}
 
 opt_encode_type:
 	ENCODE non_reserved_word_or_sconst
@@ -2147,6 +2145,12 @@ opt_compress_type:
 	}
 | /* EMPTY */ { $$.val = (*string)(nil) }
 
+opt_alter_type:
+	TYPE typename
+	{
+		$$.val = $2.colType()
+	}
+| /* EMPTY */ { $$.val = (*types.T)(nil) }
 
 alter_index_cmds:
   alter_index_cmd
@@ -13449,7 +13453,6 @@ unreserved_keyword:
 | MILLISECOND
 | MINUTE
 | MINVALUE
-| MODIFY
 | MON
 | MONTH
 | MS

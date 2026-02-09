@@ -371,7 +371,7 @@ func (sw *TSSchemaChangeWorker) handleResult(
 		//		syncErr,
 		//	)
 		case alterKwdbAddColumn, alterKwdbDropColumn, alterKwdbAlterColumnType, alterKwdbAddTag,
-			alterKwdbDropTag, alterKwdbAlterTagType, createTagIndex, dropTagIndex, modifyColumnCompress:
+			alterKwdbDropTag, alterKwdbAlterTagType, createTagIndex, dropTagIndex:
 			updateErr = sw.handleMutationForTSTable(ctx, d, syncErr)
 		case alterKwdbAlterPartitionInterval:
 			updateErr = p.handleAlterPartitionInterval(
@@ -832,7 +832,7 @@ func (sw *TSSchemaChangeWorker) makeAndRunDistPlan(
 	//	}
 	//	newPlanNode = &tsDDLNode{d: d, nodeID: nodeList}
 	case alterKwdbAddColumn, alterKwdbDropColumn, alterKwdbAlterColumnType, alterKwdbAddTag,
-		alterKwdbDropTag, alterKwdbAlterTagType, createTagIndex, dropTagIndex, modifyColumnCompress:
+		alterKwdbDropTag, alterKwdbAlterTagType, createTagIndex, dropTagIndex:
 		log.Infof(ctx, "%s job start, name: %s, id: %d, column/tag name: %s, jobID: %d, current tsVersion: %d",
 			opType, d.SNTable.Name, d.SNTable.ID, d.AlterTag.Name, sw.job.ID(), int(d.SNTable.TsTable.TsVersion))
 
@@ -1071,7 +1071,7 @@ func (sw *TSSchemaChangeWorker) sendTsTxn(
 ) error {
 	switch d.Type {
 	case alterKwdbAddTag, alterKwdbAddColumn, alterKwdbDropColumn, alterKwdbDropTag,
-		alterKwdbAlterTagType, alterKwdbAlterColumnType, createTagIndex, dropTagIndex, modifyColumnCompress:
+		alterKwdbAlterTagType, alterKwdbAlterColumnType, createTagIndex, dropTagIndex:
 		nodeList := sw.healthyNodes
 		txnID := strconv.AppendInt([]byte{}, *sw.job.ID(), 10)
 		tsTxn := tsTxn{txnID: txnID, txnEvent: event}
@@ -1148,8 +1148,6 @@ func getDDLOpType(op int32) string {
 		return "create tag index"
 	case dropTagIndex:
 		return "drop tag index"
-	case modifyColumnCompress:
-		return "modify column"
 	}
 	return ""
 }
@@ -1241,7 +1239,7 @@ func (sw *TSSchemaChangeWorker) handleMutationForTSTable(
 			}
 			return nil
 		}
-	case alterKwdbAlterColumnType, alterKwdbAlterTagType, modifyColumnCompress:
+	case alterKwdbAlterColumnType, alterKwdbAlterTagType:
 		updateFn = func(tableDesc *sqlbase.MutableTableDescriptor) error {
 			i := 0
 			for _, mutation := range tableDesc.Mutations {
