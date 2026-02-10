@@ -710,6 +710,20 @@ void TriggerSettingCallback(const std::string& key, const std::string& value) {
     EngineOptions::count_stats_recalc_cycle = atoi(value.c_str());
   } else if ("ts.metric_schema_cache.max_limit" == key) {
     EngineOptions::metric_schema_cache_capacity = atoi(value.c_str());
+  } else if ("ts.compress.algorithm" == key) {
+    if (value == "lz4") {
+      EngineOptions::compression_algorithm = GenCompAlg::kLz4;
+    } else if (value == "lzma") {
+      EngineOptions::compression_algorithm = GenCompAlg::kLzma;
+    } else if (value == "zlib") {
+      EngineOptions::compression_algorithm = GenCompAlg::kZlib;
+    } else if (value == "zstd") {
+      EngineOptions::compression_algorithm = GenCompAlg::kZstd;
+    } else if (value == "snappy") {
+      EngineOptions::compression_algorithm = GenCompAlg::kSnappy;
+    }else {
+      LOG_ERROR("Invalid compression algorithm: %s", value.c_str());
+    }
   }
 #ifndef KWBASE_OSS
   else if ("ts.storage.autonomy.mode" == key) {  // NOLINT

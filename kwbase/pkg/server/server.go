@@ -185,6 +185,11 @@ var (
 		"compression level for database's secondary compression: low, medium, high.",
 		"medium")
 
+	compressAlgorithm = settings.RegisterPublicStringSetting(
+		"ts.compress.algorithm",
+		"set default general compression algorithm: lz4, zlib, zstd, lzma, snappy",
+		"lz4")
+
 	compressLastSegment = settings.RegisterPublicBoolSetting(
 		"ts.compress.last_segment.enabled",
 		"whether to compress last segment data",

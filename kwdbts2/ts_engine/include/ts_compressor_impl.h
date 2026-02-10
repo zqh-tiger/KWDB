@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <iostream>
 #include <string>
 #include <type_traits>
 #include "ts_bufferbuilder.h"
@@ -29,6 +30,7 @@ using std::string;
 #include <zstd.h>
 #include <zlib.h>
 #include <lzma.h>
+
 namespace kwdbts {
 
 class TsCompressorBase {
@@ -57,7 +59,6 @@ class CompressorImpl {
   void operator=(const CompressorImpl &) = delete;
   virtual bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const = 0;
   virtual bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const = 0;
-  // GetUncompressedSize just for test! If used in other scenarios, further modifications are needed.
   virtual size_t GetUncompressedSize(TSSlice data, uint64_t count) const = 0;
 };
 
@@ -159,14 +160,6 @@ class Chimp : public CompressorImpl {
   size_t GetUncompressedSize(TSSlice data, uint64_t count) const override { return stride * count; }
 };
 
-// TODO(qinlipeng): kGzip = 2,
-// kLzo = 3,
-// kLz4 = 4,
-// kXz = 5,
-// kZstd = 6,
-// kLzma = 7,
-// kZlib = 8,
-// kTsz = 9,
 class SnappyString : public CompressorImpl {
  private:
   SnappyString() = default;
@@ -235,17 +228,16 @@ class LZ4String : public CompressorImpl {
           out->append(data);
           return false;
         }
-        // Write the original data length
         PutFixed64(out, data.len);
         out->append(compressed.data(), compressed_size);
         return true;
       }
       LOG_ERROR("LZ4 Compress Failed! Input size is incorrect (too large or negative).");
+      // maybe lz4frame if too large?
       return false;
     }
 
     bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override {
-      // Read the original data length
       uint64_t org_size = DecodeFixed64(data.data);
       TsBufferBuilder builder(org_size);
       if (org_size != 0) {
@@ -282,7 +274,6 @@ class ZSTDString : public CompressorImpl {
     }
 
     bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const override {
-
       size_t dst_capacity  = ZSTD_compressBound(data.len);
       std::vector<char> compressed(dst_capacity);
       if (dst_capacity != 0) {
@@ -292,7 +283,6 @@ class ZSTDString : public CompressorImpl {
           out->append(data);
           return false;
         }
-        // Write the original data length
         PutFixed64(out, data.len);
         out->append(compressed.data(), compressed_size);
         return true;
@@ -302,7 +292,6 @@ class ZSTDString : public CompressorImpl {
     }
 
     bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override {
-      // Read the original data length
       uint64_t org_size = DecodeFixed64(data.data);
       TsBufferBuilder builder(org_size);
       if (org_size != 0) {
@@ -340,91 +329,57 @@ class ZLIBString : public CompressorImpl {
 
     bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const override {
       z_stream zs = {};
-
       if (deflateInit(&zs, Z_DEFAULT_COMPRESSION) != Z_OK) {
-        throw std::runtime_error("deflateInit failed");
+        LOG_ERROR("Zlib deflateInit failed!");
+        return false;
       }
 
       zs.next_in = reinterpret_cast<Bytef*>(data.data);
       zs.avail_in = data.len;
 
-      int ret;
-      std::vector<char> compressed;
-      unsigned char outbuffer[32768];
-      do {
-        zs.next_out = outbuffer;
-        zs.avail_out = sizeof(outbuffer);
+      std::vector<Bytef> out_buffer(deflateBound(&zs, data.len));
+      zs.next_out = out_buffer.data();
+      zs.avail_out = out_buffer.size();
 
-        ret = deflate(&zs, Z_FINISH);  // 完成压缩
-
-        if (zs.avail_out != sizeof(outbuffer)) {
-          // 实际写入的数据长度
-          unsigned int have = sizeof(outbuffer) - zs.avail_out;
-          compressed.insert(compressed.end(), outbuffer, outbuffer + have);
-        }
-      } while (ret == Z_OK);
-
-      deflateEnd(&zs);
-
+      int ret = deflate(&zs, Z_FINISH);
       if (ret != Z_STREAM_END) {
-        out->append(data);
-        throw std::runtime_error("Exception during zlib compression: " +
-                                 std::string(zs.msg ? zs.msg : "unknown error"));
+        LOG_ERROR("Zlib deflate failed during compression! Error code:%d", ret);
+        deflateEnd(&zs);
+        return false;
       }
-      out->append(compressed.data(), compressed.size());
+
+      size_t compressed_size = zs.total_out;
+      deflateEnd(&zs);
+      PutFixed64(out, data.len);
+      out->append(reinterpret_cast<const char*>(out_buffer.data()), compressed_size);
       return true;
     }
 
     bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override {
-      z_stream zs = {};
-
-      int ret = inflateInit(&zs);
-      if (ret != Z_OK) {
-        throw std::runtime_error("inflateInit failed");
+      z_stream zs;
+      memset(&zs, 0, sizeof(zs));
+      if (inflateInit(&zs) != Z_OK) {
+        LOG_ERROR("Zlib inflateInit failed!");
+        return false;
       }
 
-      zs.next_in = reinterpret_cast<Bytef*>(data.data);
-      zs.avail_in = data.len;
-
-      std::vector<unsigned char> decompressed;
-      unsigned char outbuffer[32768];
-
-      do {
-        zs.next_out = outbuffer;
-        zs.avail_out = sizeof(outbuffer);
-
-        ret = inflate(&zs, Z_NO_FLUSH);
-
-        if (zs.avail_out != sizeof(outbuffer)) {
-          unsigned int have = sizeof(outbuffer) - zs.avail_out;
-          decompressed.insert(decompressed.end(), outbuffer, outbuffer + have);
-        }
-      } while (ret == Z_OK);
-
-      inflateEnd(&zs);
-
-      if (ret != Z_STREAM_END) {
-        throw std::runtime_error("Exception during zlib decompression: " +
-                                 std::string(zs.msg ? zs.msg : "unknown error"));
-      }
-
-      // return decompressed;
-      // Read the original data length
       uint64_t org_size = DecodeFixed64(data.data);
-      TsBufferBuilder builder(org_size);
-      if (org_size != 0) {
-        size_t ret_size = ZSTD_decompress(builder.data(), org_size, data.data + 8, data.len - 8);
-        if (ZSTD_isError(ret_size) || ret_size != org_size) {
-          LOG_ERROR("ZSTD Decompress Failed!");
-          builder.assign(data.data, data.len);
-          *out = builder.GetBuffer();
-          return false;
-        }
-        *out = builder.GetBuffer();
-        return true;
+      std::vector<Bytef> out_buffer(org_size);
+      zs.next_out = out_buffer.data();
+      zs.avail_out = org_size;
+
+      zs.next_in = reinterpret_cast<Bytef*>(data.data + 8);
+      zs.avail_in = data.len - 8;
+
+      int  ret = inflate(&zs, Z_FINISH);
+      if (ret != Z_STREAM_END) {
+        LOG_ERROR("Zlib inflate failed during decompression! Error code: %d", ret);
+        inflateEnd(&zs);
+        return false;
       }
-      LOG_ERROR("ZSTD Decompress Failed! Incorrect original data size.")
-      return false;
+      inflateEnd(&zs);
+      *out = TsSliceGuard(reinterpret_cast<char*>(out_buffer.data()), org_size);
+      return true;
     }
 
     size_t GetUncompressedSize(TSSlice data, uint64_t count) const override {
@@ -446,99 +401,55 @@ class LZMAString : public CompressorImpl {
     }
 
     bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const override {
-      // 1. 初始化流结构体
       lzma_stream strm = LZMA_STREAM_INIT;
-
-      // 2. 初始化编码器
-      // 参数说明: &strm, 压缩级别(1-9, 6为默认), 使用的校验和类型
       lzma_ret ret = lzma_easy_encoder(&strm, 6, LZMA_CHECK_CRC64);
-
       if (ret != LZMA_OK) {
         LOG_ERROR("Unable to initialize lzma_easy_encoder, error code: %d", ret);
         return false;
       }
 
-      // 3. 准备输入输出缓冲区
-      // 这里简单起见，假设输出缓冲区是输入的两倍（LZMA 通常压缩率很高，但极端情况可能膨胀）
-      auto inputSize = data.len;
-      out->resize(data.len * 2);
+      std::vector<uint8_t> out_buffer(data.len);
       strm.next_in = reinterpret_cast<uint8_t*>(data.data);
-      strm.avail_in = inputSize;
-      strm.next_out = reinterpret_cast<uint8_t*>(out->data());
-      strm.avail_out = out->size();
+      strm.avail_in = data.len;
+      strm.next_out = out_buffer.data();
+      strm.avail_out = data.len;
 
-      // 4. 执行压缩
-      // LZMA_RUN 表示还有更多数据，LZMA_FINISH 表示数据结束
       ret = lzma_code(&strm, LZMA_FINISH);
-
       if (ret != LZMA_STREAM_END) {
-        // std::cerr << "压缩失败，错误代码: " << ret << std::endl;
+        LOG_ERROR("LZMA compress failed, error code:%d", ret);
         lzma_end(&strm);
+        // out->assign(data.data, data.len);
         return false;
       }
-
-      // 5. 调整输出缓冲区大小，去除尾部未使用的空间
-      out->resize(out->size() - strm.avail_out);
-
-      // 6. 释放内部内存
       lzma_end(&strm);
-
-      // std::cout << "压缩成功！原始大小: " << inputSize
-      //           << ", 压缩后大小: " << output.size() << std::endl;
+      PutFixed64(out, data.len);
+      out->append(reinterpret_cast<const char*>(out_buffer.data()), strm.total_out);
       return true;
     }
 
     bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override {
+      lzma_stream strm = LZMA_STREAM_INIT;
+      lzma_ret ret = lzma_stream_decoder(&strm, UINT64_MAX, 0);
+      if (ret != LZMA_OK) {
+        LOG_ERROR("Unable to initialize lzma_easy_encoder, error code: %d", ret);
+        return false;
+      }
+
+      uint64_t org_size = DecodeFixed64(data.data);
+      std::vector<uint8_t> uncompressed(org_size);
+      strm.next_in = reinterpret_cast<uint8_t*>(data.data + 8);
+      strm.avail_in = data.len - 8;
+      strm.next_out = uncompressed.data();
+      strm.avail_out = org_size;
+      ret = lzma_code(&strm, LZMA_FINISH);
+      if (ret != LZMA_OK && ret != LZMA_STREAM_END) {
+        LOG_ERROR("LZMA Decompression failed with error code: %d", ret);
+        lzma_end(&strm);
+        return false;
+      }
+      lzma_end(&strm);
+      *out = TsSliceGuard(reinterpret_cast<char*>(uncompressed.data()), org_size);
       return true;
-      // z_stream zs = {};
-      //
-      // int ret = inflateInit(&zs);
-      // if (ret != Z_OK) {
-      //   throw std::runtime_error("inflateInit failed");
-      // }
-      //
-      // zs.next_in = reinterpret_cast<Bytef*>(data.data);
-      // zs.avail_in = data.len;
-      //
-      // std::vector<unsigned char> decompressed;
-      // unsigned char outbuffer[32768];
-      //
-      // do {
-      //   zs.next_out = outbuffer;
-      //   zs.avail_out = sizeof(outbuffer);
-      //
-      //   ret = inflate(&zs, Z_NO_FLUSH);
-      //
-      //   if (zs.avail_out != sizeof(outbuffer)) {
-      //     unsigned int have = sizeof(outbuffer) - zs.avail_out;
-      //     decompressed.insert(decompressed.end(), outbuffer, outbuffer + have);
-      //   }
-      // } while (ret == Z_OK);
-      //
-      // inflateEnd(&zs);
-      //
-      // if (ret != Z_STREAM_END) {
-      //   throw std::runtime_error("Exception during zlib decompression: " +
-      //                            std::string(zs.msg ? zs.msg : "unknown error"));
-      // }
-      //
-      // // return decompressed;
-      // // Read the original data length
-      // uint64_t org_size = DecodeFixed64(data.data);
-      // TsBufferBuilder builder(org_size);
-      // if (org_size != 0) {
-      //   size_t ret_size = ZSTD_decompress(builder.data(), org_size, data.data + 8, data.len - 8);
-      //   if (ZSTD_isError(ret_size) || ret_size != org_size) {
-      //     LOG_ERROR("ZSTD Decompress Failed!");
-      //     builder.assign(data.data, data.len);
-      //     *out = builder.GetBuffer();
-      //     return false;
-      //   }
-      //   *out = builder.GetBuffer();
-      //   return true;
-      // }
-      // LOG_ERROR("ZSTD Decompress Failed! Incorrect original data size.")
-      // return false;
     }
 
     size_t GetUncompressedSize(TSSlice data, uint64_t count) const override {

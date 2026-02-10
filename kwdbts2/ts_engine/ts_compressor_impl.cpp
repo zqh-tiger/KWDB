@@ -894,27 +894,28 @@ std::tuple<TsCompAlg, GenCompAlg> CompressorManager::TwoLevelCompressor::GetAlgo
 }
 
 CompressorManager::CompressorManager() {
-  GenCompAlg second = EngineOptions::compress_stage == 2 ? GenCompAlg::kSnappy : GenCompAlg::kPlain;
+  GenCompAlg second = EngineOptions::compress_stage == 2 ? EngineOptions::compression_algorithm : GenCompAlg::kPlain;
+  LOG_INFO("============== Second: %d", second);
   // 1. construct default algorithms.
   const std::vector<DATATYPE> timestamp_type{
       DATATYPE::TIMESTAMP64,     DATATYPE::TIMESTAMP64_MICRO,     DATATYPE::TIMESTAMP64_NANO,
       DATATYPE::TIMESTAMP64, DATATYPE::TIMESTAMP64_MICRO, DATATYPE::TIMESTAMP64_NANO};
   for (auto i : timestamp_type) {
-    default_algs_[i] = {TsCompAlg::kSimple8B_V2_s64, GenCompAlg::kLz4};
+    default_algs_[i] = {TsCompAlg::kSimple8B_V2_s64, second};
   }
 
   // TODO(qinlipeng): change default encode and compress type
-  default_algs_[DATATYPE::INT16] = {TsCompAlg::kSimple8B_V2_s16, GenCompAlg::kZlib};
-  default_algs_[DATATYPE::INT32] = {TsCompAlg::kSimple8B_V2_s32, GenCompAlg::kLz4};
-  default_algs_[DATATYPE::INT64] = {TsCompAlg::kSimple8B_V2_s64, GenCompAlg::kLz4};
-  default_algs_[DATATYPE::FLOAT] = {TsCompAlg::kChimp_32, GenCompAlg::kLz4};
-  default_algs_[DATATYPE::DOUBLE] = {TsCompAlg::kChimp_64, GenCompAlg::kLz4};
+  default_algs_[DATATYPE::INT16] = {TsCompAlg::kSimple8B_V2_s16, second};
+  default_algs_[DATATYPE::INT32] = {TsCompAlg::kSimple8B_V2_s32, second};
+  default_algs_[DATATYPE::INT64] = {TsCompAlg::kSimple8B_V2_s64, second};
+  default_algs_[DATATYPE::FLOAT] = {TsCompAlg::kChimp_32, second};
+  default_algs_[DATATYPE::DOUBLE] = {TsCompAlg::kChimp_64, second};
   // char string
-  default_algs_[DATATYPE::BYTE] = {TsCompAlg::kPlain, GenCompAlg::kZstd};
-  default_algs_[DATATYPE::CHAR] = {TsCompAlg::kPlain, GenCompAlg::kZstd};
-  default_algs_[DATATYPE::BINARY] = {TsCompAlg::kPlain, GenCompAlg::kZstd};
+  default_algs_[DATATYPE::BYTE] = {TsCompAlg::kPlain, second};
+  default_algs_[DATATYPE::CHAR] = {TsCompAlg::kPlain, second};
+  default_algs_[DATATYPE::BINARY] = {TsCompAlg::kPlain, second};
 
-  default_algs_[DATATYPE::BOOL] = {TsCompAlg::kBitPacking, GenCompAlg::kZstd};
+  default_algs_[DATATYPE::BOOL] = {TsCompAlg::kBitPacking, second};
 
   // 2. construct encoding algorithms.
   ts_comp_[TsCompAlg::kGorilla_32] = &ConcreateTsCompressor<GorillaIntV2<int32_t>>::GetInstance();
@@ -947,6 +948,8 @@ CompressorManager::CompressorManager() {
   general_compressor_[GenCompAlg::kSnappy] = &ConcreateGenCompressor<SnappyString>::GetInstance();
   general_compressor_[GenCompAlg::kLz4] = &ConcreateGenCompressor<LZ4String>::GetInstance();
   general_compressor_[GenCompAlg::kZstd] = &ConcreateGenCompressor<ZSTDString>::GetInstance();
+  general_compressor_[GenCompAlg::kLzma] = &ConcreateGenCompressor<LZMAString>::GetInstance();
+  general_compressor_[GenCompAlg::kZlib] = &ConcreateGenCompressor<ZLIBString>::GetInstance();
 
 
   // varchar varstring
