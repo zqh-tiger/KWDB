@@ -475,6 +475,12 @@ func MakeTSColumnDefDescs(
 			pgcode.WrongObjectType, "column %s: unsupported %s type %s in timeseries table", col.Name, errMsg, errType)
 	}
 	col.TsCol.StorageType = storageType
+	if !col.IsTagCol() {
+		// set compress info on ts col
+		if err = col.checkColumnCompress(compressInfo); err != nil {
+			return nil, nil, err
+		}
+	}
 	stLen := GetStorageLenForFixedLenTypes(storageType)
 	if stLen != 0 {
 		// we are done for non-string data type, return now
@@ -549,11 +555,6 @@ func MakeTSColumnDefDescs(
 	default:
 		col.TsCol.VariableLengthType = StorageTuple
 	}
-	if !col.IsTagCol() {
-		if err = col.checkColumnCompress(compressInfo); err != nil {
-			return nil, nil, err
-		}
-	}
 	return col, typedExpr, nil
 }
 
@@ -579,7 +580,7 @@ func (col *ColumnDescriptor) checkColumnCompress(compressInfo CompressInfo) erro
 					return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), enType)
 				}
 			default:
-				return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), encodeType)
+				return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), enType)
 			}
 		}
 		col.TsCol.EncodeType = &enType

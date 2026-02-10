@@ -1737,10 +1737,22 @@ func applyColumnMutation(
 				}
 			}
 			if !isOnlyMetaChanged {
+				// make compress info to construct new column descriptor
 				compressInfo := sqlbase.CompressInfo{
 					EncodeType:    t.EncodeType,
 					CompressType:  t.CompressType,
 					CompressLevel: t.CompressLevel,
+				}
+				// if do not alter compress, get compress info from origin column
+				if compressInfo.EncodeType == nil {
+					compressInfo.EncodeType = col.TsCol.EncodeType
+				}
+				if compressInfo.CompressType == nil {
+					compressInfo.CompressType = col.TsCol.CompressType
+				}
+				// if set compress type to disabled, we should not set origin column compress level to compress info, we will set level to default.
+				if compressInfo.CompressLevel == nil && (compressInfo.CompressType == nil || strings.ToLower(*compressInfo.CompressType) != "disabled") {
+					compressInfo.CompressLevel = col.TsCol.CompressLevel
 				}
 				//var alteringTag sqlbase.ColumnDescriptor
 				alteringCol, _, err := sqlbase.MakeTSColumnDefDescs(col.Name, newType, col.Nullable, false, sqlbase.ColumnType_TYPE_DATA, nil, &params.p.semaCtx, compressInfo)
