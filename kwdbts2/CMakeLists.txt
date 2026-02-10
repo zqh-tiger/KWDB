@@ -391,120 +391,6 @@ ExternalProject_Add(
 set(SNAPPY_INCLUDE ${SNAPPY_INSTALL_DIR}/include)
 set(SNAPPY_LIB ${SNAPPY_INSTALL_DIR}/lib/libsnappy.a)
 
-# === zstd 配置（本地源码 + 多线程支持）===
-set(ZSTD_SOURCE_DIR      ${CMAKE_CURRENT_LIST_DIR}/third_party/zstd-1.5.7)
-set(ZSTD_INSTALL_PREFIX  ${THIRD_PARTY_DIR}/zstd-install)
-
-set(ZSTD_INCLUDE_DIR ${ZSTD_INSTALL_PREFIX}/include)
-set(ZSTD_STATIC_LIB  ${ZSTD_INSTALL_PREFIX}/lib/libzstd.a)
-
-file(MAKE_DIRECTORY ${ZSTD_INCLUDE_DIR})
-file(MAKE_DIRECTORY ${ZSTD_INSTALL_PREFIX}/lib)
-
-ExternalProject_Add(
-        zstd_external
-        SOURCE_DIR       ${ZSTD_SOURCE_DIR}
-        PREFIX       ${THIRD_PARTY_DIR}/zstd-build
-        CONFIGURE_COMMAND ""
-        BUILD_COMMAND
-        ${CMAKE_MAKE_PROGRAM} -C ${ZSTD_SOURCE_DIR}/lib
-        -j${NPROC}
-        libzstd.a
-        CC=${CMAKE_C_COMPILER}
-        CXX=${CMAKE_CXX_COMPILER}
-        AR=${CMAKE_AR}
-        # 注意：zstd 的 Makefile 自动检测 pthread，无需额外定义
-        INSTALL_COMMAND
-        COMMAND
-        ${CMAKE_COMMAND} -E copy ${ZSTD_SOURCE_DIR}/lib/zstd.h ${ZSTD_INCLUDE_DIR}/
-        COMMAND
-        ${CMAKE_COMMAND} -E copy ${ZSTD_SOURCE_DIR}/lib/zstd_errors.h ${ZSTD_INCLUDE_DIR}/
-#        COMMAND
-#        ${CMAKE_COMMAND} -E copy ${ZSTD_SOURCE_DIR}/lib/zstdmt_compress.h ${ZSTD_INCLUDE_DIR}/
-        COMMAND
-        ${CMAKE_COMMAND} -E copy ${ZSTD_SOURCE_DIR}/lib/libzstd.a ${ZSTD_STATIC_LIB}
-        BUILD_IN_SOURCE 0
-        LOG_BUILD        ON
-        LOG_INSTALL      ON
-)
-
-# 导入静态库
-add_library(zstd STATIC IMPORTED GLOBAL)
-set_property(TARGET zstd PROPERTY IMPORTED_LOCATION ${ZSTD_STATIC_LIB})
-set_property(TARGET zstd PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${ZSTD_INCLUDE_DIR})
-
-add_dependencies(zstd zstd_external)
-
-# 设置 zlib 构建相关路径
-set(ZLIB_SOURCE_DIR      ${CMAKE_CURRENT_LIST_DIR}/third_party/zlib-1.3.1)
-set(ZLIB_INSTALL_PREFIX  ${THIRD_PARTY_DIR}/zstd-install)
-
-set(ZLIB_INCLUDE_DIR ${ZLIB_INSTALL_PREFIX}/include)
-set(ZLIB_STATIC_LIB  ${ZLIB_INSTALL_PREFIX}/lib/libzlib.a)
-file(MAKE_DIRECTORY ${ZLIB_INCLUDE_DIR})
-file(MAKE_DIRECTORY ${ZLIB_INSTALL_PREFIX}/lib)
-
-# 使用 ExternalProject_Add 添加 zlib
-ExternalProject_Add(
-        zlib_external
-        SOURCE_DIR ${ZLIB_SOURCE_DIR}
-        PREFIX       ${THIRD_PARTY_DIR}/zlib-build
-        CMAKE_ARGS
-        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        -DCMAKE_INSTALL_PREFIX=${ZLIB_INSTALL_PREFIX}
-        -DBUILD_SHARED_LIBS=OFF
-#        -DCMAKE_POSITION_INDEPENDENT_CODE=ON  # 若你的项目需要 PIC（如用于共享库）
-
-        # 禁用不必要的步骤
-        UPDATE_DISCONNECTED 1
-        LOG_DOWNLOAD ON
-        LOG_CONFIGURE ON
-        LOG_BUILD ON
-)
-
-# 创建一个导入库目标（IMPORTED），方便链接
-add_library(zlib STATIC IMPORTED GLOBAL)
-set_property(TARGET zlib PROPERTY IMPORTED_LOCATION ${ZLIB_STATIC_LIB})
-set_property(TARGET zlib PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${ZLIB_INCLUDE_DIR})
-
-# 声明依赖：确保在构建 my_app 前先构建 zlib
-add_dependencies(zlib zlib_external)
-
-# 设置 zlib 构建相关路径
-set(LZMA_SOURCE_DIR      ${CMAKE_CURRENT_LIST_DIR}/third_party/xz-5.8.2)
-set(LZMA_INSTALL_PREFIX  ${THIRD_PARTY_DIR}/lzma-install)
-
-set(LZMA_INCLUDE_DIR ${LZMA_INSTALL_PREFIX}/include)
-set(LZMA_STATIC_LIB  ${LZMA_INSTALL_PREFIX}/lib/liblzma.a)
-file(MAKE_DIRECTORY ${LZMA_INCLUDE_DIR})
-file(MAKE_DIRECTORY ${LZMA_INSTALL_PREFIX}/lib)
-
-# 使用 ExternalProject_Add 添加 zlib
-ExternalProject_Add(
-        lzma_external
-        SOURCE_DIR ${LZMA_SOURCE_DIR}
-        PREFIX       ${THIRD_PARTY_DIR}/lzma-build
-        CMAKE_ARGS
-        -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}
-        -DCMAKE_INSTALL_PREFIX=${LZMA_INSTALL_PREFIX}
-        -DBUILD_SHARED_LIBS=OFF
-        #        -DCMAKE_POSITION_INDEPENDENT_CODE=ON  # 若你的项目需要 PIC（如用于共享库）
-
-        # 禁用不必要的步骤
-#        UPDATE_DISCONNECTED 1
-#        LOG_DOWNLOAD ON
-#        LOG_CONFIGURE ON
-#        LOG_BUILD ON
-)
-
-# 创建一个导入库目标（IMPORTED），方便链接
-add_library(lzma STATIC IMPORTED GLOBAL)
-set_property(TARGET lzma PROPERTY IMPORTED_LOCATION ${LZMA_STATIC_LIB})
-set_property(TARGET lzma PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${LZMA_INCLUDE_DIRS})
-
-# 声明依赖：确保在构建 my_app 前先构建 zlib
-add_dependencies(lzma lzma_external)
-
 # include file of kwdbts2
 set(TS_INCLUDE
         ../common/src/h
@@ -524,7 +410,7 @@ set(TS_INCLUDE
         ${SNAPPY_INCLUDE}
         ${ZSTD_INCLUDE_DIR}
         brpc/include
-        )
+)
 if (NOT KWBASE_OSS)
     list(APPEND TS_INCLUDE icl/autonomy/include)
 endif()

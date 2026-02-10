@@ -1269,7 +1269,8 @@ TSStatus TSDropColumn(TSEngine* engine, TSTableID table_id, char* transaction_id
 
 TSStatus TSAlterColumn(TSEngine* engine, TSTableID table_id, char* transaction_id,
                            TSSlice new_column, TSSlice origin_column,
-                           uint32_t cur_version, uint32_t new_version) {
+                           uint32_t cur_version, uint32_t new_version,
+                           bool alter_type, bool alter_compress) {
   kwdbContext_t context;
   kwdbContext_p ctx_p = &context;
   KStatus s = InitServerKWDBContext(ctx_p);
@@ -1279,15 +1280,27 @@ TSStatus TSAlterColumn(TSEngine* engine, TSTableID table_id, char* transaction_i
 
   string err_msg;
   bool is_dropped = false;
-  s = engine->AlterColumn(ctx_p, table_id, transaction_id, is_dropped, new_column, origin_column,
-                              cur_version, new_version, err_msg);
-  if (s != KStatus::SUCCESS) {
-    if (err_msg.empty()) {
-      err_msg = "unknown error";
+  if (alter_type) {
+    s = engine->AlterColumn(ctx_p, table_id, transaction_id, is_dropped, new_column, origin_column,
+                            cur_version, new_version, AlterType::ALTER_COLUMN_TYPE, err_msg);
+    if (s != KStatus::SUCCESS) {
+      if (err_msg.empty()) {
+        err_msg = "unknown error";
+      }
+      return ToTsStatus(err_msg);
     }
-    return ToTsStatus(err_msg);
   }
 
+  if (alter_compress) {
+    s = engine->AlterColumn(ctx_p, table_id, transaction_id, is_dropped, new_column, origin_column,
+                            cur_version, new_version, AlterType::ALTER_COLUMN_COMPRESS_INFO, err_msg);
+    if (s != KStatus::SUCCESS) {
+      if (err_msg.empty()) {
+        err_msg = "unknown error";
+      }
+      return ToTsStatus(err_msg);
+    }
+  }
     return kTsSuccess;
 }
 

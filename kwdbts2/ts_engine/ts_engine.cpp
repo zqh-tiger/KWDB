@@ -976,7 +976,7 @@ KStatus TSEngineImpl::DropColumn(kwdbContext_p ctx, const KTableKey &table_id, c
 
 KStatus TSEngineImpl::AlterColumn(kwdbContext_p ctx, const KTableKey &table_id, char *transaction_id,
                                   bool& is_dropped, TSSlice new_column, TSSlice origin_column,
-                                  uint32_t cur_version, uint32_t new_version, string &err_msg) {
+                                  uint32_t cur_version, uint32_t new_version, AlterType alter_type, string &err_msg) {
   roachpb::KWDBKTSColumn new_col_meta;
   if (!new_col_meta.ParseFromArray(new_column.data, new_column.len)) {
     LOG_ERROR("ParseFromArray Internal Error");
@@ -991,19 +991,6 @@ KStatus TSEngineImpl::AlterColumn(kwdbContext_p ctx, const KTableKey &table_id, 
   }
   // Get transaction ID.
   uint64_t x_id = tsx_manager_sys_->getMtrID(transaction_id);
-
-  AlterType alter_type;
-  switch (new_col_meta.alter_type()) {
-  case roachpb::KW_ALTER_COLUMN_TYPE:
-    alter_type = AlterType::ALTER_COLUMN_TYPE;
-    break;
-  case roachpb::KW_ALTER_COLUMN_COMPRESS_INFO:
-    alter_type = AlterType::ALTER_COLUMN_COMPRESS_INFO;
-    break;
-  default:
-    LOG_ERROR("Unknown alter type: %d", new_col_meta.alter_type());
-    return KStatus::FAIL;
-  }
 
   // Write Alter DDL into WAL
   s = wal_sys_->WriteDDLAlterWAL(ctx, x_id, table_id, alter_type, cur_version, new_version, origin_column);

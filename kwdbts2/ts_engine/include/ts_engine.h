@@ -258,7 +258,8 @@ class TSEngineImpl : public TSEngine {
                      TSSlice column, uint32_t cur_version, uint32_t new_version, string& err_msg) override;
 
   KStatus AlterColumn(kwdbContext_p ctx, const KTableKey& table_id, char* transaction_id, bool& is_dropped,
-    TSSlice new_column, TSSlice origin_column, uint32_t cur_version, uint32_t new_version, string& err_msg) override;
+    TSSlice new_column, TSSlice origin_column, uint32_t cur_version, uint32_t new_version, AlterType alter_type,
+    string& err_msg) override;
 
   KStatus AlterPartitionInterval(kwdbContext_p ctx, const KTableKey& table_id, uint64_t partition_interval) override {
     LOG_WARN("should not use AlterPartitionInterval any more.");

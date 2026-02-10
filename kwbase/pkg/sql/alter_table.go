@@ -227,10 +227,10 @@ func (n *alterTableNode) startExec(params runParams) error {
 					return pgerror.Newf(pgcode.Syntax, "modify column without any compress parameters")
 				}
 
-				if err = checkColumnCompress(colDef.ColumnEncode.EncodeType, colDef.ColumnCompress.CompressType,
-					colDef.ColumnCompress.CompressLevel, TSColumn); err != nil {
-					return err
-				}
+				//if err = sqlbase.checkColumnCompress(colDef.ColumnEncode.EncodeType, colDef.ColumnCompress.CompressType,
+				//	colDef.ColumnCompress.CompressLevel, TSColumn); err != nil {
+				//	return err
+				//}
 				n.tableDesc.AddColumnMutation(TSColumn, sqlbase.DescriptorMutation_ADD)
 				// Allocate IDs now, so new IDs are available to subsequent commands
 				if err := n.tableDesc.AllocateIDs(); err != nil {
@@ -1720,6 +1720,7 @@ func applyColumnMutation(
 			var newType *types.T
 			var modifyCompress bool
 			modifyCompress = t.EncodeType != nil || t.CompressType != nil || t.CompressLevel != nil
+			newType = &col.Type
 			if t.ToType != nil {
 				newType = prepareAlterType(t.ToType)
 				if col.Type.Identical(newType) {

@@ -805,6 +805,8 @@ func (r *TsEngine) AlterTSColumnType(
 		goToTSSlice(originColMeta),
 		C.uint32_t(currentTSVersion),
 		C.uint32_t(newTSVersion),
+		C.bool(isAlterType),
+		C.bool(isAlterCompress),
 	)
 	if err := statusToError(status); err != nil {
 		return err
