@@ -895,7 +895,7 @@ std::tuple<TsCompAlg, GenCompAlg> CompressorManager::TwoLevelCompressor::GetAlgo
 
 CompressorManager::CompressorManager() {
   GenCompAlg second = EngineOptions::compress_stage == 2 ? EngineOptions::compression_algorithm : GenCompAlg::kPlain;
-  LOG_INFO("============== Second: %d", second);
+  // LOG_INFO("============== Second: %d", second);
   // 1. construct default algorithms.
   const std::vector<DATATYPE> timestamp_type{
       DATATYPE::TIMESTAMP64,     DATATYPE::TIMESTAMP64_MICRO,     DATATYPE::TIMESTAMP64_NANO,

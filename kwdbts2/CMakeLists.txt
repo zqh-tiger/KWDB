@@ -391,12 +391,17 @@ ExternalProject_Add(
 set(SNAPPY_INCLUDE ${SNAPPY_INSTALL_DIR}/include)
 set(SNAPPY_LIB ${SNAPPY_INSTALL_DIR}/lib/libsnappy.a)
 
+# zlib
+set(ZLIB_BUILD_SHARED_LIBS OFF CACHE BOOL "Disable shared library build for zlib" FORCE)
+
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/third_party/zlib-1.2.11)
+
+
 # include file of kwdbts2
 set(TS_INCLUDE
         ../common/src/h
         ../common/src/include
         third_party/gtest-1.8.1/fused-src
-        third_party/zstd-1.5.7/lib
         ${NATIVE}/kwdbts2/third_party/include
         include
         roachpb
@@ -408,7 +413,7 @@ set(TS_INCLUDE
         exec/include
         statistic/include
         ${SNAPPY_INCLUDE}
-        ${ZSTD_INCLUDE_DIR}
+        ${ZLIB_INCLUDE}
         brpc/include
 )
 if (NOT KWBASE_OSS)

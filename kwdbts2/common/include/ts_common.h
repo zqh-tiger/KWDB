@@ -145,6 +145,7 @@ enum class TsCompAlg : uint16_t {
 
   kBitPacking = 21,
 
+  kDisabled = 22,
   TS_COMP_ALG_LAST
 };
 
@@ -159,6 +160,8 @@ enum class GenCompAlg : uint16_t {
   kZstd = 6,
   kLzma = 7,
   kZlib = 8,
+  kTsz = 9,
+  kDisabled = 10,
   GEN_COMP_ALG_LAST
 };
 
