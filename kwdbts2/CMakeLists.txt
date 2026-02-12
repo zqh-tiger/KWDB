@@ -437,7 +437,6 @@ set(TS_INCLUDE
         exec/include
         statistic/include
         ${SNAPPY_INCLUDE}
-        ${ZLIB_INCLUDE}
         ${ZSTD_INCLUDE}
         brpc/include
 )
