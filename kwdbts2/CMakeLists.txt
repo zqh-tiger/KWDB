@@ -391,11 +391,35 @@ ExternalProject_Add(
 set(SNAPPY_INCLUDE ${SNAPPY_INSTALL_DIR}/include)
 set(SNAPPY_LIB ${SNAPPY_INSTALL_DIR}/lib/libsnappy.a)
 
+#/usr/bin/ld: ../lib/libz.a(deflate.o): relocation R_X86_64_PC32 against symbol `z_errmsg' can not be used when making a shared object; recompile with -fPIC
 # zlib
-set(ZLIB_BUILD_SHARED_LIBS OFF CACHE BOOL "Disable shared library build for zlib" FORCE)
+#set(ZLIB_BUILD_SHARED_LIBS OFF CACHE BOOL "Disable shared library build for zlib" FORCE)
+#add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/third_party/zlib-1.2.11)
 
-add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/third_party/zlib-1.2.11)
+# zstd
+set(ZSTD_INSTALL_DIR ${THIRD_PARTY_DIR}/zstd_install)
+set(ZSTD_CMAKE_ARGS
+        -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_INSTALL_PREFIX=${ZSTD_INSTALL_DIR}
+        -DZSTD_BUILD_CONTRIB=OFF
+        -DZSTD_BUILD_PROGRAMS=OFF
+        -DZSTD_BUILD_SHARED=OFF
+        -DZSTD_BUILD_STATIC=ON
+        -DZSTD_BUILD_TESTS=OFF
+        -DZSTD_LEGACY_SUPPORT=OFF
+#        -DCMAKE_INSTALL_LIBDIR=lib
+#        -DCMAKE_CXX_STANDARD=17
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+)
 
+ExternalProject_Add(
+        zstd
+        PREFIX ${THIRD_PARTY_DIR}/zstd_build
+        SOURCE_DIR ${CMAKE_CURRENT_LIST_DIR}/third_party/zstd-1.4.8/build/cmake
+        CMAKE_ARGS ${ZSTD_CMAKE_ARGS}
+)
+set(ZSTD_INCLUDE ${ZSTD_INSTALL_DIR}/include)
+set(ZSTD_LIB ${ZSTD_INSTALL_DIR}/lib/libzstd.a)
 
 # include file of kwdbts2
 set(TS_INCLUDE
@@ -414,6 +438,7 @@ set(TS_INCLUDE
         statistic/include
         ${SNAPPY_INCLUDE}
         ${ZLIB_INCLUDE}
+        ${ZSTD_INCLUDE}
         brpc/include
 )
 if (NOT KWBASE_OSS)
@@ -479,7 +504,7 @@ endif()
 add_dependencies(${KWDBTS2_SERVER_LIB} snappy zstd)
 
 # Set brpc library dependency
-target_link_libraries(${KWDBTS2_SERVER_LIB} PRIVATE ${BRPC_STATIC_LIB} libssl.a libcrypto.a ${SNAPPY_LIB} ${LZ4_STATIC_LIB} ${GFLAGS_STATIC_LIB} ${PROTOBUF_STATIC_LIB} ${ZSTD_STATIC_LIB})
+target_link_libraries(${KWDBTS2_SERVER_LIB} PRIVATE ${BRPC_STATIC_LIB} libssl.a libcrypto.a z ${SNAPPY_LIB} ${LZ4_STATIC_LIB} ${GFLAGS_STATIC_LIB} ${PROTOBUF_STATIC_LIB} ${ZSTD_LIB})
 
 # Import the header files required by the server module
 target_include_directories(${KWDBTS2_SERVER_LIB} PRIVATE
@@ -571,7 +596,7 @@ if (WITH_TESTS)
                 third_party/gtest-1.8.1/fused-src
                 )
 
-        target_link_libraries(${tname} PRIVATE ${KWDBTS2_SERVER_LIB} common ${PROTOBUF_STATIC_LIB} gtest dl rt z)
+        target_link_libraries(${tname} PRIVATE ${KWDBTS2_SERVER_LIB} common ${PROTOBUF_STATIC_LIB} gtest dl rt z ${LZ4_STATIC_LIB} ${ZSTD_LIB})
         set_target_properties(${tname} PROPERTIES
                 CXX_STANDARD_REQUIRED YES
                 CXX_EXTENSIONS NO
