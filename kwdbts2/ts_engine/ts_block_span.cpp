@@ -290,7 +290,7 @@ KStatus TsBlockSpan::BuildCompressedData(TsBufferBuilder* data) {
     // LSN use default algorithm
     auto [first, second] = mgr.GetDefaultAlgorithm(d_type);
     TSSlice plain = lsn_data.AsSlice();
-    mgr.CompressData(plain, nullptr, nrow_, &compressed, first, second);
+    mgr.CompressData(plain, nullptr, nrow_, &compressed, first, second, 0);
     data->append(compressed.AsSlice());
     // block data offset
     uint32_t column_block_offset = data->size() - block_data_begin_offset - col_offsets_len;
@@ -372,7 +372,7 @@ KStatus TsBlockSpan::BuildCompressedData(TsBufferBuilder* data) {
       // var offset data
       TsBufferBuilder compressed;
       bool ok = mgr.CompressData({var_offset_data.data(), var_offset_data.size()},
-                                 nullptr, nrow_, &compressed, first, second);
+                                 nullptr, nrow_, &compressed, first, second, (*scan_attrs_)[scan_idx].compress_level);
       if (!ok) {
         LOG_ERROR("Compress var offset data failed");
         return KStatus::SUCCESS;
@@ -382,7 +382,7 @@ KStatus TsBlockSpan::BuildCompressedData(TsBufferBuilder* data) {
       data->append(compressed.AsSlice());
       // var data
       compressed.clear();
-      ok = mgr.CompressVarchar({var_data.data(), var_data.size()}, &compressed, GenCompAlg::kSnappy);
+      ok = mgr.CompressVarchar({var_data.data(), var_data.size()}, &compressed, GenCompAlg::kSnappy, (*scan_attrs_)[scan_idx].compress_level);
       if (!ok) {
         LOG_ERROR("Compress var data failed");
         return KStatus::SUCCESS;
@@ -393,7 +393,7 @@ KStatus TsBlockSpan::BuildCompressedData(TsBufferBuilder* data) {
       TsBufferBuilder compressed;
       size_t col_size = scan_idx == 0 ? 8 : d_size;
       TSSlice plain{const_cast<char*>(fixed_col_value_addr), nrow_ * col_size};
-      mgr.CompressData(plain, b, nrow_, &compressed, first, second);
+      mgr.CompressData(plain, b, nrow_, &compressed, first, second, (*scan_attrs_)[scan_idx].compress_level);
       data->append(compressed.AsSlice());
     }
     // block data offset

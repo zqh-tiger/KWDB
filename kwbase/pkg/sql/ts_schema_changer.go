@@ -305,6 +305,8 @@ func makeCompressInfo(kColDesc *sqlbase.KWDBKTSColumn, col sqlbase.ColumnDescrip
 			kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_LZMA
 		case "snappy":
 			kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_SNAPPY
+		case "zstd":
+			kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_ZSTD
 		case "disabled":
 			kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_DISABLED
 		}

@@ -139,10 +139,11 @@ func (u updater) Set(key, rawValue string, vt string) error {
 	}
 
 	if needSendToAE(key) {
+		lowerValue := rawValue
 		if key == "ts.compress.level" {
-			rawValue = strings.ToLower(rawValue)
+			lowerValue = strings.ToLower(rawValue)
 		}
-		C.TSSetClusterSetting(goToTSSlice([]byte(key)), goToTSSlice([]byte(rawValue)))
+		C.TSSetClusterSetting(goToTSSlice([]byte(key)), goToTSSlice([]byte(lowerValue)))
 	}
 
 	switch setting := d.(type) {

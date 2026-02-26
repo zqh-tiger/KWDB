@@ -588,7 +588,7 @@ func (col *ColumnDescriptor) checkColumnCompress(compressInfo CompressInfo) erro
 	if compressType != nil {
 		cpType := strings.ToLower(*compressType)
 		switch cpType {
-		case "lz4", "zlib", "lzma", "snappy", "disabled":
+		case "lz4", "zlib", "lzma", "zstd", "snappy", "disabled":
 			col.TsCol.CompressType = &cpType
 		default:
 			return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support compress type %s", col.Type.Name(), cpType)

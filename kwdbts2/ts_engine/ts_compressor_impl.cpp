@@ -44,7 +44,7 @@ namespace kwdbts {
 // Ref: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 // NOTE: We should do some extra optimization for this algorithm, because the
 //       timestamp is recorded as nanosecond.
-bool GorillaInt::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const {
+bool GorillaInt::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
   static constexpr int dsize = sizeof(int64_t);
   if (count < 2) {
     return false;
@@ -211,7 +211,7 @@ static inline const char *TypedDecodeVarint(const char *ptr, const char *limit, 
 }
 
 template <class T>
-bool GorillaIntV2<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const {
+bool GorillaIntV2<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
   if (count <= 2) {
     return false;
   }
@@ -285,7 +285,7 @@ bool GorillaIntV2<T>::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out
 
 static int leading_mapping[] = {0, 8, 12, 16, 18, 20, 22, 24};
 template <class T>
-bool Chimp<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const {
+bool Chimp<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
   assert(data.len == sizeof(T) * count);
   auto sz = sizeof(T) * 8;
   out->clear();
@@ -797,7 +797,7 @@ bool V2Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) {
 };  // namespace __simple8b_detail
 
 template <class T>
-bool Simple8BInt<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const {
+bool Simple8BInt<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
   assert(data.len == sizeof(T) * count);
   const T *p_data = reinterpret_cast<const T *>(data.data);
   return __simple8b_detail::CompressImplGreedy<T>(p_data, count, out);
@@ -809,7 +809,7 @@ bool Simple8BInt<T>::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out)
 }
 
 template <class T>
-bool Simple8BIntV2<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const {
+bool Simple8BIntV2<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
   assert(data.len == sizeof(T) * count);
   const T *p_data = reinterpret_cast<const T *>(data.data);
   return __simple8b_detail::V2CompressImplGreedy<T>(p_data, count, out);
@@ -820,7 +820,7 @@ bool Simple8BIntV2<T>::Decompress(TSSlice data, uint64_t count, TsSliceGuard *ou
   return __simple8b_detail::V2Decompress<T>(data, count, out);
 }
 
-bool BitPacking::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const {
+bool BitPacking::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
   assert(data.len == count);
   uint8_t c = 0;
   for (int i = 0; i < count; ++i) {
@@ -847,7 +847,7 @@ bool BitPacking::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) con
 }
 
 bool CompressorManager::TwoLevelCompressor::Compress(TSSlice raw, const TsBitmapBase *bitmap,
-                                                     uint32_t count, TsBufferBuilder *out) const {
+                                                     uint32_t count, TsBufferBuilder *out, uint8_t level) const {
   if (IsPlain()) return false;
   TsBufferBuilder buf;
   TSSlice data;
@@ -865,7 +865,7 @@ bool CompressorManager::TwoLevelCompressor::Compress(TSSlice raw, const TsBitmap
     *out = std::move(buf);
     return true;
   }
-  return second_->Compress(data, out);
+  return second_->Compress(data, out, level);
 }
 bool CompressorManager::TwoLevelCompressor::Decompress(TSSlice raw, const TsBitmapBase *bitmap, uint32_t count,
                                                        TsSliceGuard *out) const {
@@ -916,6 +916,12 @@ CompressorManager::CompressorManager() {
   default_algs_[DATATYPE::BINARY] = {TsCompAlg::kPlain, second};
 
   default_algs_[DATATYPE::BOOL] = {TsCompAlg::kBitPacking, second};
+
+  algs_level_[GenCompAlg::kLz4] = {1, 2, 3};
+  algs_level_[GenCompAlg::kSnappy] = {1, 1, 1};
+  algs_level_[GenCompAlg::kZstd] = {1, 11, 22};
+  algs_level_[GenCompAlg::kLzma] = {1, 6, 9};
+  algs_level_[GenCompAlg::kZlib] = {1, 6, 9};
 
   // 2. construct encoding algorithms.
   ts_comp_[TsCompAlg::kGorilla_32] = &ConcreateTsCompressor<GorillaIntV2<int32_t>>::GetInstance();
@@ -1014,6 +1020,9 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype, const AttributeInfo& attr_i
   case roachpb::KW_COL_COMPRESS_TYPE_ZLIB:
     second = GenCompAlg::kZlib;
     break;
+  case roachpb::KW_COL_COMPRESS_TYPE_ZSTD:
+    second = GenCompAlg::kZstd;
+    break;
   case roachpb::KW_COL_COMPRESS_TYPE_LZMA:
     second = GenCompAlg::kLzma;
     break;
@@ -1041,7 +1050,7 @@ auto CompressorManager::GetDefaultCompressor(DATATYPE dtype) const -> TwoLevelCo
 }
 
 bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, uint64_t count, TsBufferBuilder *output,
-                                     TsCompAlg first, GenCompAlg second) const {
+                                     TsCompAlg first, GenCompAlg second, uint8_t level) const {
   if (EngineOptions::compress_stage == 0) {
     first = TsCompAlg::kPlain;
     second = GenCompAlg::kPlain;
@@ -1051,7 +1060,7 @@ bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, 
   static_assert(sizeof(second) == sizeof(uint16_t));
   auto compressor = GetCompressor(first, second);
   TsBufferBuilder tmp;
-  bool ok = compressor.Compress(input, bitmap, count, &tmp);
+  bool ok = compressor.Compress(input, bitmap, count, &tmp, algs_level_.at(second)[level]);
   if (!ok) {
     first = TsCompAlg::kPlain;
     second = GenCompAlg::kPlain;
@@ -1066,7 +1075,7 @@ bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, 
   return true;
 }
 
-bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, GenCompAlg alg) const {
+bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, GenCompAlg alg, uint8_t level) const {
   assert(sizeof(alg) == sizeof(uint16_t));
   output->clear();
   PutFixed16(output, static_cast<uint16_t>(alg));
@@ -1077,7 +1086,7 @@ bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, 
     return true;
   }
   TsBufferBuilder tmp;
-  bool ok = it->second->Compress(input, &tmp);
+  bool ok = it->second->Compress(input, &tmp, level);
   if (!ok) {
     return false;
   }

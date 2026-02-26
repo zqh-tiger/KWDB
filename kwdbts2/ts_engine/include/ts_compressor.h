@@ -56,7 +56,7 @@ class CompressorManager {
       first_algo_ = first == nullptr ? TsCompAlg::kPlain : first_algo;
       second_algo_ = second == nullptr ? GenCompAlg::kPlain : second_algo;
     }
-    bool Compress(TSSlice raw, const TsBitmapBase* bitmap, uint32_t count, TsBufferBuilder* out) const;
+    bool Compress(TSSlice raw, const TsBitmapBase* bitmap, uint32_t count, TsBufferBuilder* out, uint8_t level) const;
 
     bool Decompress(TSSlice raw, const TsBitmapBase* bitmap, uint32_t count, TsSliceGuard* out) const;
     bool IsPlain() const { return (first_ == nullptr && second_ == nullptr); }
@@ -69,6 +69,7 @@ class CompressorManager {
   // Regardless of how EngineOptions::compress_stage is set, default_algs_ maintains the encoding and compression
   // algorithms corresponding to different data types.
   std::unordered_map<DATATYPE, std::tuple<TsCompAlg, GenCompAlg>> default_algs_;
+  std::unordered_map<GenCompAlg, std::array<uint8_t, 3>> algs_level_;
 
   CompressorManager();
 
@@ -90,8 +91,8 @@ class CompressorManager {
   TwoLevelCompressor GetDefaultCompressor(DATATYPE dtype) const;
 
   bool CompressData(TSSlice input, const TsBitmapBase* bitmap, uint64_t count, TsBufferBuilder* output,
-                    TsCompAlg first, GenCompAlg second) const;
-  bool CompressVarchar(TSSlice input, TsBufferBuilder* output, GenCompAlg alg) const;
+                    TsCompAlg first, GenCompAlg second, uint8_t level) const;
+  bool CompressVarchar(TSSlice input, TsBufferBuilder* output, GenCompAlg alg, uint8_t level) const;
   bool DecompressData(TsSliceGuard&& input, const TsBitmapBase* bitmap, uint64_t count, TsSliceGuard* out) const {
     if (input.size() < 4) {
       LOG_ERROR("Invalid input length, too short");

@@ -134,7 +134,7 @@ bool TsColumnBlock::GetCompressedData(TsBufferBuilder* out, TsColumnCompressInfo
     second = GenCompAlg::kPlain;
   }
 
-  bool ok = mgr.CompressData(input, p_bitmap, count_, &tmp, first, second);
+  bool ok = mgr.CompressData(input, p_bitmap, count_, &tmp, first, second, col_schema_.compress_level);
   if (!ok) {
     return false;
   }
@@ -145,7 +145,7 @@ bool TsColumnBlock::GetCompressedData(TsBufferBuilder* out, TsColumnCompressInfo
   if (!varchar_guard_.empty()) {
     tmp.clear();
     auto comp_alg = compress ? GenCompAlg::kSnappy : GenCompAlg::kPlain;
-    ok = mgr.CompressVarchar(varchar_guard_.AsSlice(), &tmp, comp_alg);
+    ok = mgr.CompressVarchar(varchar_guard_.AsSlice(), &tmp, comp_alg, col_schema_.compress_level);
     if (!ok) {
       return false;
     }

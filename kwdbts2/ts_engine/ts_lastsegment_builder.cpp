@@ -201,7 +201,7 @@ KStatus TsLastSegmentBuilder::RecordAndWriteBlockToFile() {
   const auto& mgr = CompressorManager::GetInstance();
   TsBufferBuilder compressed_data;
   bool ok = mgr.CompressData(entity_id_slice, nullptr, entity_id_buffer_.size(), &compressed_data, TsCompAlg::kPlain,
-                             GenCompAlg::kPlain);
+                             GenCompAlg::kPlain, 0);
   if (!ok) {
     return FAIL;
   }

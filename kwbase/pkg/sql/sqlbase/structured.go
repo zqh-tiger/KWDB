@@ -4090,14 +4090,23 @@ func (desc *ColumnDescriptor) SQLString() string {
 	}
 	if desc.TsCol.EncodeType != nil {
 		f.WriteString(" ENCODE ")
-		f.WriteString(*desc.TsCol.EncodeType)
+		f.WriteString(strings.ToUpper(*desc.TsCol.EncodeType))
 	}
 	if desc.TsCol.CompressType != nil {
 		f.WriteString(" COMPRESS ")
-		f.WriteString(*desc.TsCol.CompressType)
+		f.WriteString(strings.ToUpper(*desc.TsCol.CompressType))
 		if desc.TsCol.CompressLevel != nil {
 			f.WriteString(" LEVEL ")
-			f.WriteString(*desc.TsCol.CompressLevel)
+			level := strings.ToUpper(*desc.TsCol.CompressLevel)
+			switch level {
+			case "L":
+				level = "LOW"
+			case "M":
+				level = "MEDIUM"
+			case "H":
+				level = "HIGH"
+			}
+			f.WriteString(level)
 		}
 	}
 	if desc.IsComputed() {

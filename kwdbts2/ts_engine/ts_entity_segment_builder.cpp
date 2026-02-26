@@ -285,7 +285,7 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
       // var offset data
       TsBufferBuilder compressed;
       TSSlice var_offsets = {block.buffer.data(), n_rows_ * sizeof(uint32_t)};
-      bool ok = mgr.CompressData(var_offsets, nullptr, n_rows_, &compressed, first, second);
+      bool ok = mgr.CompressData(var_offsets, nullptr, n_rows_, &compressed, first, second, metric_schema_[col_idx - 1].compress_level);
       if (!ok) {
         LOG_ERROR("Compress var offset data failed");
         return KStatus::SUCCESS;
@@ -297,7 +297,7 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
       compressed.clear();
       uint32_t var_data_offset = EngineOptions::max_rows_per_block * sizeof(uint32_t);
       ok = mgr.CompressVarchar({block.buffer.data() + var_data_offset, block.buffer.size() - var_data_offset},
-                               &compressed, GenCompAlg::kSnappy);
+                               &compressed, GenCompAlg::kSnappy, metric_schema_[col_idx - 1].compress_level);
       if (!ok) {
         LOG_ERROR("Compress var data failed");
         return KStatus::SUCCESS;
@@ -306,7 +306,7 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
     } else {
       TsBufferBuilder compressed;
       TSSlice plain{block.buffer.data(), block.buffer.size()};
-      mgr.CompressData(plain, b, n_rows_, &compressed, first, second);
+      mgr.CompressData(plain, b, n_rows_, &compressed, first, second, metric_schema_[col_idx - 1].compress_level);
       data_buffer->append(compressed);
     }
     // col offset
