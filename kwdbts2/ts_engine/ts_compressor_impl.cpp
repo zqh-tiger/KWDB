@@ -894,8 +894,8 @@ std::tuple<TsCompAlg, GenCompAlg> CompressorManager::TwoLevelCompressor::GetAlgo
 }
 
 CompressorManager::CompressorManager() {
-  GenCompAlg second = EngineOptions::compress_stage == 2 ? EngineOptions::compression_algorithm : GenCompAlg::kPlain;
-  // LOG_INFO("============== Second: %d", second);
+  GenCompAlg second = EngineOptions::compress_stage == 2 || EngineOptions::compress_stage == 3 ? EngineOptions::compression_algorithm : GenCompAlg::kPlain;
+
   // 1. construct default algorithms.
   const std::vector<DATATYPE> timestamp_type{
       DATATYPE::TIMESTAMP64,     DATATYPE::TIMESTAMP64_MICRO,     DATATYPE::TIMESTAMP64_NANO,
@@ -917,6 +917,7 @@ CompressorManager::CompressorManager() {
 
   default_algs_[DATATYPE::BOOL] = {TsCompAlg::kBitPacking, second};
 
+  algs_level_[GenCompAlg::kPlain] = {1, 1, 1};
   algs_level_[GenCompAlg::kLz4] = {1, 2, 3};
   algs_level_[GenCompAlg::kSnappy] = {1, 1, 1};
   algs_level_[GenCompAlg::kZstd] = {1, 11, 22};
@@ -954,7 +955,6 @@ CompressorManager::CompressorManager() {
   general_compressor_[GenCompAlg::kSnappy] = &ConcreateGenCompressor<SnappyString>::GetInstance();
   general_compressor_[GenCompAlg::kLz4] = &ConcreateGenCompressor<LZ4String>::GetInstance();
   general_compressor_[GenCompAlg::kZstd] = &ConcreateGenCompressor<ZSTDString>::GetInstance();
-  general_compressor_[GenCompAlg::kLzma] = &ConcreateGenCompressor<LZMAString>::GetInstance();
   general_compressor_[GenCompAlg::kZlib] = &ConcreateGenCompressor<ZLIBString>::GetInstance();
 
 

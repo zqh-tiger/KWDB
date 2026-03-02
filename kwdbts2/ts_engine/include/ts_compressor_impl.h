@@ -13,7 +13,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <iostream>
 #include <string>
 #include <type_traits>
 #include "ts_bufferbuilder.h"
@@ -29,7 +28,6 @@ using std::string;
 #include <lz4.h>
 #include <zstd.h>
 #include <zlib.h>
-#include <lzma.h>
 
 namespace kwdbts {
 
@@ -379,76 +377,6 @@ class ZLIBString : public CompressorImpl {
       }
       inflateEnd(&zs);
       *out = TsSliceGuard(reinterpret_cast<char*>(out_buffer.data()), org_size);
-      return true;
-    }
-
-    size_t GetUncompressedSize(TSSlice data, uint64_t count) const override {
-      uint64_t org_size = DecodeFixed64(data.data);
-      return org_size == 0 ? -1 : org_size;
-    }
-};
-
-// LZMA
-class LZMAString : public CompressorImpl {
-  private:
-    LZMAString() = default;
-
-  public:
-    static constexpr int stride = -1;
-    static LZMAString &GetInstance() {
-      static LZMAString inst;
-      return inst;
-    }
-
-    bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const override {
-      lzma_stream strm = LZMA_STREAM_INIT;
-      lzma_ret ret = lzma_easy_encoder(&strm, level, LZMA_CHECK_CRC64);
-      if (ret != LZMA_OK) {
-        LOG_ERROR("Unable to initialize lzma_easy_encoder, error code: %d", ret);
-        return false;
-      }
-
-      std::vector<uint8_t> out_buffer(data.len);
-      strm.next_in = reinterpret_cast<uint8_t*>(data.data);
-      strm.avail_in = data.len;
-      strm.next_out = out_buffer.data();
-      strm.avail_out = data.len;
-
-      ret = lzma_code(&strm, LZMA_FINISH);
-      if (ret != LZMA_STREAM_END) {
-        LOG_ERROR("LZMA compress failed, error code:%d", ret);
-        lzma_end(&strm);
-        // out->assign(data.data, data.len);
-        return false;
-      }
-      lzma_end(&strm);
-      PutFixed64(out, data.len);
-      out->append(reinterpret_cast<const char*>(out_buffer.data()), strm.total_out);
-      return true;
-    }
-
-    bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override {
-      lzma_stream strm = LZMA_STREAM_INIT;
-      lzma_ret ret = lzma_stream_decoder(&strm, UINT64_MAX, 0);
-      if (ret != LZMA_OK) {
-        LOG_ERROR("Unable to initialize lzma_easy_encoder, error code: %d", ret);
-        return false;
-      }
-
-      uint64_t org_size = DecodeFixed64(data.data);
-      std::vector<uint8_t> uncompressed(org_size);
-      strm.next_in = reinterpret_cast<uint8_t*>(data.data + 8);
-      strm.avail_in = data.len - 8;
-      strm.next_out = uncompressed.data();
-      strm.avail_out = org_size;
-      ret = lzma_code(&strm, LZMA_FINISH);
-      if (ret != LZMA_OK && ret != LZMA_STREAM_END) {
-        LOG_ERROR("LZMA Decompression failed with error code: %d", ret);
-        lzma_end(&strm);
-        return false;
-      }
-      lzma_end(&strm);
-      *out = TsSliceGuard(reinterpret_cast<char*>(uncompressed.data()), org_size);
       return true;
     }
 

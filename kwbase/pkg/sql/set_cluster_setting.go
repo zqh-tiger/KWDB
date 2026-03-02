@@ -242,8 +242,8 @@ func checkTsCompressLevel(encodedValue string) error {
 
 func checkTsCompressAlgorithm(encodedValue string) error {
 	value := strings.ToLower(encodedValue)
-	if value != "lz4" && value != "zstd" && value != "zlib" && value != "lzma" && value != "snappy" {
-		return errors.New("Invalid algorithm, allowed: lz4 | lzma | zlib | zstd | snappy")
+	if value != "lz4" && value != "zstd" && value != "zlib" && value != "snappy" {
+		return errors.New("Invalid algorithm, allowed: lz4 | zlib | zstd | snappy")
 	}
 	return nil
 }
@@ -300,7 +300,7 @@ var CheckClusterSetting = map[string]CheckOperation{
 	"ts.rows_per_block.min_limit":        checkTsRowsPerBlockMinLimit,
 	"ts.compact.max_limit":               checkTsCompactLastSegmentMaxLimit,
 	"ts.compress.stage":                  checkTsCompressStage,
-	"ts.compress.Level":                  checkTsCompressLevel,
+	"ts.compress.level":                  checkTsCompressLevel,
 	"ts.compress.algorithm":              checkTsCompressAlgorithm,
 	"ts.compress.last_segment.enabled":   checkTsCompressLastSegment,
 	"ts.reserved_last_segment.max_limit": checkTsReservedLastSegmentMaxLimit,

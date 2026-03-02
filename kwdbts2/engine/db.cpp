@@ -713,8 +713,6 @@ void TriggerSettingCallback(const std::string& key, const std::string& value) {
   } else if ("ts.compress.algorithm" == key) {
     if (value == "lz4") {
       EngineOptions::compression_algorithm = GenCompAlg::kLz4;
-    } else if (value == "lzma") {
-      EngineOptions::compression_algorithm = GenCompAlg::kLzma;
     } else if (value == "zlib") {
       EngineOptions::compression_algorithm = GenCompAlg::kZlib;
     } else if (value == "zstd") {

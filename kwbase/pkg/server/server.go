@@ -187,7 +187,7 @@ var (
 
 	compressAlgorithm = settings.RegisterPublicStringSetting(
 		"ts.compress.algorithm",
-		"set default general compression algorithm: lz4, zlib, zstd, lzma, snappy",
+		"set default general compression algorithm: lz4, zlib, zstd, snappy",
 		"lz4")
 
 	compressLastSegment = settings.RegisterPublicBoolSetting(
