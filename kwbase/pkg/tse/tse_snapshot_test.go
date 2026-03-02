@@ -298,7 +298,12 @@ func TestGetTableMetaByVersion(t *testing.T) {
 		switch c := cmd.(type) {
 		case *tree.AlterTableAddColumn:
 			d := c.ColumnDef
-			TSColumn, _, err := sqlbase.MakeTSColumnDefDescs(string(d.Name), d.Type, true, false, sqlbase.ColumnType_TYPE_DATA, d.DefaultExpr.Expr, nil)
+			compressInfo := sqlbase.CompressInfo{
+				EncodeType:    d.ColumnEncode.EncodeType,
+				CompressType:  d.ColumnCompress.CompressType,
+				CompressLevel: d.ColumnCompress.CompressLevel,
+			}
+			TSColumn, _, err := sqlbase.MakeTSColumnDefDescs(string(d.Name), d.Type, true, false, sqlbase.ColumnType_TYPE_DATA, d.DefaultExpr.Expr, nil, compressInfo)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -230,7 +230,7 @@ struct AttributeInfo {
   ColumnFlag col_flag;
   uint8_t encode_type;
   uint8_t compress_type;
-  uint8_t compress_level;
+  uint8_t compress_level;  // ColumnCompressLevel
   char reserved[1] = {0};
 
   AttributeInfo();

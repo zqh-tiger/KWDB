@@ -114,7 +114,7 @@ template <class T>
 static bool Simple8BEncode(const std::vector<T> &input, kwdbts::TsBufferBuilder *out) {
   kwdbts::ConcreateTsCompressor<kwdbts::Simple8BInt<T>>::GetInstance();
   const TSSlice plain{(char *)(input.data()), sizeof(T) * input.size()};
-  return kwdbts::Simple8BInt<T>::GetInstance().Compress(plain, input.size(), out);
+  return kwdbts::Simple8BInt<T>::GetInstance().Compress(plain, input.size(), out, 0);
 }
 
 template <class T>
@@ -127,7 +127,7 @@ template <class T>
 static bool Simple8BV2Encode(const std::vector<T> &input, kwdbts::TsBufferBuilder *out) {
   kwdbts::ConcreateTsCompressor<kwdbts::Simple8BInt<T>>::GetInstance();
   const TSSlice plain{(char *)(input.data()), sizeof(T) * input.size()};
-  return kwdbts::Simple8BIntV2<T>::GetInstance().Compress(plain, input.size(), out);
+  return kwdbts::Simple8BIntV2<T>::GetInstance().Compress(plain, input.size(), out, 0);
 }
 
 template <class T>
@@ -765,7 +765,7 @@ TYPED_TEST(FloatingPointCompressorTester, CompressDecompress) {
 // bool
 
 static bool BitPackingEnc(const std::vector<uint8_t> &data, kwdbts::TsBufferBuilder *out) {
-  return kwdbts::BitPacking::GetInstance().Compress(TSSlice{(char *)data.data(), data.size()}, data.size(), out);
+  return kwdbts::BitPacking::GetInstance().Compress(TSSlice{(char *)data.data(), data.size()}, data.size(), out, 0);
 }
 
 static bool BitPackingDec(TSSlice data, size_t size, std::vector<uint8_t> *out) {

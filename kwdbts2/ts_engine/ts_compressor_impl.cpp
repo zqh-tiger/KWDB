@@ -917,12 +917,12 @@ CompressorManager::CompressorManager() {
 
   default_algs_[DATATYPE::BOOL] = {TsCompAlg::kBitPacking, second};
 
-  algs_level_[GenCompAlg::kPlain] = {1, 1, 1};
-  algs_level_[GenCompAlg::kLz4] = {1, 2, 3};
-  algs_level_[GenCompAlg::kSnappy] = {1, 1, 1};
-  algs_level_[GenCompAlg::kZstd] = {1, 11, 22};
-  algs_level_[GenCompAlg::kLzma] = {1, 6, 9};
-  algs_level_[GenCompAlg::kZlib] = {1, 6, 9};
+  algs_level_[GenCompAlg::kPlain] = {1, 1, 1, 1};
+  algs_level_[GenCompAlg::kLz4] = {2, 1, 2, 3};
+  algs_level_[GenCompAlg::kSnappy] = {1, 1, 1, 1};
+  algs_level_[GenCompAlg::kZstd] = {11, 1, 11, 22};
+  algs_level_[GenCompAlg::kLzma] = {6, 1, 6, 9};
+  algs_level_[GenCompAlg::kZlib] = {6, 1, 6, 9};
 
   // 2. construct encoding algorithms.
   ts_comp_[TsCompAlg::kGorilla_32] = &ConcreateTsCompressor<GorillaIntV2<int32_t>>::GetInstance();
@@ -1009,7 +1009,7 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype, const AttributeInfo& attr_i
 
   switch (attr_info.compress_type) {
   case roachpb::KW_COL_COMPRESS_TYPE_UNSPECIFIED:
-    second = GenCompAlg::kPlain;
+    second = EngineOptions::compression_algorithm;
     break;
   case roachpb::KW_COL_COMPRESS_TYPE_SNAPPY:
     second = GenCompAlg::kSnappy;
@@ -1022,9 +1022,6 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype, const AttributeInfo& attr_i
     break;
   case roachpb::KW_COL_COMPRESS_TYPE_ZSTD:
     second = GenCompAlg::kZstd;
-    break;
-  case roachpb::KW_COL_COMPRESS_TYPE_LZMA:
-    second = GenCompAlg::kLzma;
     break;
   case roachpb::KW_COL_COMPRESS_TYPE_DISABLED:
     second = GenCompAlg::kDisabled;

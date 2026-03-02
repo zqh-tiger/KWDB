@@ -260,6 +260,7 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
 
   // write column block data and column agg
   assert(n_cols_ == metric_schema_.size() + 1);
+  AttributeInfo attr_info;
   for (int col_idx = 0; col_idx < n_cols_; ++col_idx) {
     DATATYPE d_type = col_idx == 0 ? DATATYPE::INT64 : col_idx != 1 ?
                       static_cast<DATATYPE>(metric_schema_[col_idx - 1].type) : DATATYPE::TIMESTAMP64;
@@ -277,7 +278,14 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
     }
     TsBitmapBase* b = has_bitmap ? block.bitmap.get() : nullptr;
     // compress col data & write to buffer
-    auto [first, second] = mgr.GetAlgorithm(d_type, metric_schema_[col_idx - 1]);
+    if (0 == col_idx) {
+      attr_info.encode_type = roachpb::KW_COL_ENCODE_TYPE_SIMPLE8B;
+      attr_info.compress_type = roachpb::KW_COL_COMPRESS_TYPE_UNSPECIFIED;
+      attr_info.compress_level = roachpb::KW_COL_COMPRESS_LEVEL_UNSPECIFIED;
+    } else {
+      attr_info = metric_schema_[col_idx - 1];
+    }
+    auto [first, second] = mgr.GetAlgorithm(d_type, attr_info);
     // auto [first, second] = mgr.GetDefaultAlgorithm(d_type);
     if (is_var_col) {
       // varchar offset use simple8b algorithm
@@ -306,7 +314,7 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
     } else {
       TsBufferBuilder compressed;
       TSSlice plain{block.buffer.data(), block.buffer.size()};
-      mgr.CompressData(plain, b, n_rows_, &compressed, first, second, metric_schema_[col_idx - 1].compress_level);
+      mgr.CompressData(plain, b, n_rows_, &compressed, first, second, attr_info.compress_level);
       data_buffer->append(compressed);
     }
     // col offset
