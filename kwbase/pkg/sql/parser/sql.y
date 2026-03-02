@@ -13709,6 +13709,7 @@ col_name_keyword:
 type_func_name_keyword:
   COLLATION
 | CROSS
+| ENCODE
 | FULL
 | INNER
 | ILIKE
@@ -13788,7 +13789,6 @@ reserved_keyword:
 | EACH
 | ELSE
 | ELSIF
-| ENCODE
 | END
 | ENDIF
 | ENDWHILE
