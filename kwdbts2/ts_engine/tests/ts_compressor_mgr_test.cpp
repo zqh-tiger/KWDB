@@ -195,7 +195,7 @@ TYPED_TEST(CompressorManagerTester, Null_Compressions) {
 
     kwdbts::TsBufferBuilder compressed;
     bool ok = inst.CompressData(raw_slice, bitmap.get(), count, &compressed, GetCompressorAlg<TypeParam>::Alg,
-                                kwdbts::GenCompAlg::kPlain);
+                                kwdbts::GenCompAlg::kPlain, 0);
     ASSERT_TRUE(ok);
     ASSERT_LE(compressed.size() - 4 /* header */, sizeof(TypeParam) * bitmap->GetValidCount());
 

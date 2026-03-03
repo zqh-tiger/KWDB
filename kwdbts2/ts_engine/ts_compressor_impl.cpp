@@ -1027,7 +1027,7 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype,
   }
 
   switch (attr_info.compress_type) {
-  case roachpb::KW_COL_COMPRESS_TYPE_UNSPECIFIED:{
+  case roachpb::KW_COL_COMPRESS_TYPE_UNSPECIFIED: {
     auto it = default_algs_.find(dtype);
     if (it != default_algs_.end()) {
       first = std::get<0>(it->second);
