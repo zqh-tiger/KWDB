@@ -280,7 +280,7 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
     // compress col data & write to buffer
     if (0 == col_idx) {
       attr_info.encode_type = roachpb::KW_COL_ENCODE_TYPE_SIMPLE8B;
-      attr_info.compress_type = roachpb::KW_COL_COMPRESS_TYPE_UNSPECIFIED;
+      attr_info.compress_type = roachpb::KW_COL_COMPRESS_TYPE_DISABLED;
       attr_info.compress_level = roachpb::KW_COL_COMPRESS_LEVEL_UNSPECIFIED;
     } else {
       attr_info = metric_schema_[col_idx - 1];
@@ -293,7 +293,8 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
       // var offset data
       TsBufferBuilder compressed;
       TSSlice var_offsets = {block.buffer.data(), n_rows_ * sizeof(uint32_t)};
-      bool ok = mgr.CompressData(var_offsets, nullptr, n_rows_, &compressed, first, second, metric_schema_[col_idx - 1].compress_level);
+      bool ok = mgr.CompressData(var_offsets, nullptr, n_rows_, &compressed,
+        first, second, attr_info.compress_level);
       if (!ok) {
         LOG_ERROR("Compress var offset data failed");
         return KStatus::SUCCESS;

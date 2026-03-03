@@ -719,7 +719,7 @@ void TriggerSettingCallback(const std::string& key, const std::string& value) {
       EngineOptions::compression_algorithm = GenCompAlg::kZstd;
     } else if (value == "snappy") {
       EngineOptions::compression_algorithm = GenCompAlg::kSnappy;
-    }else {
+    } else {
       LOG_ERROR("Invalid compression algorithm: %s", value.c_str());
     }
   }

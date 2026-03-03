@@ -11,10 +11,14 @@
 
 #pragma once
 
+#include <lz4.h>
+#include <zstd.h>
+#include <zlib.h>
 #include <cstddef>
 #include <cstdint>
 #include <string>
 #include <type_traits>
+#include <vector>
 #include "ts_bufferbuilder.h"
 #include "ts_sliceguard.h"
 
@@ -25,9 +29,6 @@ using std::string;
 #include "snappy-sinksource.h"
 #include "ts_bitmap.h"
 #include "ts_compressor.h"
-#include <lz4.h>
-#include <zstd.h>
-#include <zlib.h>
 
 namespace kwdbts {
 
@@ -206,15 +207,15 @@ class SnappyString : public CompressorImpl {
 
 // LZ4
 class LZ4String : public CompressorImpl {
-  private:
-    LZ4String() = default;
+ private:
+  LZ4String() = default;
 
-  public:
-    static constexpr int stride = -1;
-    static LZ4String &GetInstance() {
-      static LZ4String inst;
-      return inst;
-    }
+ public:
+  static constexpr int stride = -1;
+  static LZ4String &GetInstance() {
+    static LZ4String inst;
+    return inst;
+  }
 
     bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const override {
       int dst_capacity  = LZ4_compressBound(data.len);
@@ -261,15 +262,15 @@ class LZ4String : public CompressorImpl {
 
 // ZSTD
 class ZSTDString : public CompressorImpl {
-  private:
-    ZSTDString() = default;
+ private:
+  ZSTDString() = default;
 
-  public:
-    static constexpr int stride = -1;
-    static ZSTDString &GetInstance() {
-      static ZSTDString inst;
-      return inst;
-    }
+ public:
+  static constexpr int stride = -1;
+  static ZSTDString &GetInstance() {
+    static ZSTDString inst;
+    return inst;
+  }
 
     bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const override {
       size_t dst_capacity  = ZSTD_compressBound(data.len);
@@ -315,15 +316,15 @@ class ZSTDString : public CompressorImpl {
 
 // ZLIB
 class ZLIBString : public CompressorImpl {
-  private:
-    ZLIBString() = default;
+ private:
+  ZLIBString() = default;
 
-  public:
-    static constexpr int stride = -1;
-    static ZLIBString &GetInstance() {
-      static ZLIBString inst;
-      return inst;
-    }
+ public:
+  static constexpr int stride = -1;
+  static ZLIBString &GetInstance() {
+    static ZLIBString inst;
+    return inst;
+  }
 
     bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const override {
       z_stream zs = {};
