@@ -46,8 +46,8 @@ namespace kwdbts {
 //       timestamp is recorded as nanosecond.
 bool GorillaInt::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
   static constexpr int dsize = sizeof(int64_t);
-  if (count < 2) {
-    return false;
+  if (count == 0) {
+    return true;
   }
   assert(data.len == count * dsize);
   out->reserve(dsize * count);
@@ -116,6 +116,8 @@ bool GorillaInt::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) con
   int64_t current_ts = v;
   builder.append(reinterpret_cast<char *>(&current_ts), dsize);
   if (count == 1) {
+    assert(builder.size() == dsize);
+    *out = builder.GetBuffer();
     return true;
   }
   ok = reader.ReadBits(32, &v);
@@ -212,8 +214,8 @@ static inline const char *TypedDecodeVarint(const char *ptr, const char *limit, 
 
 template <class T>
 bool GorillaIntV2<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
-  if (count <= 2) {
-    return false;
+  if (count == 0) {
+    return true;
   }
   assert(data.len == count * stride);
   out->reserve(stride * count);
@@ -221,6 +223,9 @@ bool GorillaIntV2<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *ou
 
   // 1. record the first timestamp;
   TypedPutVarint(out, EncodeZigZag(ts_data[0]));
+  if (count == 1) {
+    return true;
+  }
   // 2. record delta
   T delta;
   if (CheckedSub(ts_data[1], ts_data[0], &delta)) {
@@ -245,8 +250,8 @@ bool GorillaIntV2<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *ou
 
 template <class T>
 bool GorillaIntV2<T>::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const {
-  if (count <= 2) {
-    return false;
+  if (count == 0) {
+    return true;
   }
   TsBufferBuilder builder(stride * count);
   T *outdata = reinterpret_cast<T *>(builder.data());
@@ -260,6 +265,10 @@ bool GorillaIntV2<T>::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out
   }
   T ts = DecodeZigZag(v);
   outdata[0] = ts;
+  if (count == 1) {
+    *out = builder.GetBuffer();
+    return true;
+  }
 
   ptr = TypedDecodeVarint(ptr, limit, &v);
   if (ptr == nullptr) {
@@ -289,9 +298,11 @@ bool Chimp<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint
   assert(data.len == sizeof(T) * count);
   auto sz = sizeof(T) * 8;
   out->clear();
-  if (count <= 1) {
-    return false;
+
+  if (count == 0) {
+    return true;  // no data, no need to compress
   }
+
   using utype = std::conditional_t<std::is_same_v<T, double>, uint64_t, uint32_t>;
   const utype *ptr = reinterpret_cast<utype *>(data.data);
   TsBitWriter writer(out);
@@ -340,12 +351,12 @@ bool Chimp<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint
 
 template <class T>
 bool Chimp<T>::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const {
-  auto sz = sizeof(T) * 8;
-  TsBufferBuilder builder;
-  builder.reserve(count * sizeof(T));
   if (count == 0) {
     return true;
   }
+  auto sz = sizeof(T) * 8;
+  TsBufferBuilder builder;
+  builder.reserve(count * sizeof(T));
   TsBitReader reader(std::string_view{data.data, data.len});
   uint64_t v;
   bool ok = reader.ReadBits(sz, &v);
@@ -414,7 +425,7 @@ bool Chimp<T>::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const
 template class Chimp<double>;
 template class Chimp<float>;
 
-namespace __simple8b_detail {
+namespace _simple8b_detail {
 alignas(64) static constexpr uint32_t ITEMWIDTH[16] = {0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 30, 60};
 /* The following array is generate by python code:
 >>> width = [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 30, 60]
@@ -579,7 +590,7 @@ bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) {
 template <class T>
 inline auto CheckedSubForS8B(const T a, const T b) -> std::pair<int64_t, bool> {
   if constexpr (std::is_unsigned_v<T>) {
-    int64_t diff = static_cast<std::make_signed_t<T>>(a - b);
+    int64_t diff = static_cast<int64_t>(static_cast<std::make_signed_t<T>>(a - b));
     bool overflow = (a > b && diff < 0) || (a < b && diff > 0);
     return {diff, overflow};
   }
@@ -594,17 +605,12 @@ inline auto CheckedSubForS8B(const T a, const T b) -> std::pair<int64_t, bool> {
 //  delta-of-delta + simple8b
 template <typename T>
 bool V2CompressImplGreedy(const T *data, uint64_t count, TsBufferBuilder *out) {
-  if (count < 2) {
-    return false;
-  }
   static_assert(std::is_integral_v<T>);
-
-  auto [delta, overflow] = CheckedSubForS8B(data[1], data[0]);
-  if (overflow) {
-    return false;
+  if (count == 0) {
+    return true;
   }
-
   out->clear();
+
   if constexpr (sizeof(T) >= 4) {
     auto v1 = EncodeZigZagIfNeeded(data[0]);
     TypedPutVarint(out, v1);
@@ -613,6 +619,16 @@ bool V2CompressImplGreedy(const T *data, uint64_t count, TsBufferBuilder *out) {
   } else {
     out->append(reinterpret_cast<const char *>(&data[0]), sizeof(T));
   }
+
+  if (count == 1) {
+    return true;
+  }
+
+  auto [delta, overflow] = CheckedSubForS8B(data[1], data[0]);
+  if (overflow) {
+    return false;
+  }
+
   auto v2 = EncodeZigZagIfNeeded(delta);
   TypedPutVarint(out, v2);
 
@@ -726,8 +742,8 @@ bool V2CompressImplGreedy(const T *data, uint64_t count, TsBufferBuilder *out) {
 
 template <typename T>
 bool V2Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) {
-  if (count < 2) {
-    return false;
+  if (count == 0) {
+    return true;
   }
   TsBufferBuilder builder(sizeof(T) * count);
   T *outdata = reinterpret_cast<T *>(builder.data());
@@ -751,13 +767,18 @@ bool V2Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) {
     cursor += sizeof(utype_t);
   }
 
+  outdata[idx++] = prev_value;
+  if (count == 1) {
+    *out = builder.GetBuffer();
+    return idx == count && cursor == end;
+  }
+
   uint64_t v2 = 0;
   cursor = TypedDecodeVarint(cursor, end, &v2);
   int64_t delta = DecodeZigZagIfNeeded<int64_t>(v2);
   curr_value = prev_value + delta;
 
 
-  outdata[idx++] = prev_value;
   outdata[idx++] = curr_value;
 
   while (cursor + 8 <= end && idx < count) {
@@ -794,30 +815,30 @@ bool V2Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) {
   return idx == count && cursor == end;
 }
 
-};  // namespace __simple8b_detail
+};  // namespace _simple8b_detail
 
 template <class T>
 bool Simple8BInt<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
   assert(data.len == sizeof(T) * count);
   const T *p_data = reinterpret_cast<const T *>(data.data);
-  return __simple8b_detail::CompressImplGreedy<T>(p_data, count, out);
+  return _simple8b_detail::CompressImplGreedy<T>(p_data, count, out);
 }
 
 template <class T>
 bool Simple8BInt<T>::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const {
-  return __simple8b_detail::Decompress<T>(data, count, out);
+  return _simple8b_detail::Decompress<T>(data, count, out);
 }
 
 template <class T>
 bool Simple8BIntV2<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
   assert(data.len == sizeof(T) * count);
   const T *p_data = reinterpret_cast<const T *>(data.data);
-  return __simple8b_detail::V2CompressImplGreedy<T>(p_data, count, out);
+  return _simple8b_detail::V2CompressImplGreedy<T>(p_data, count, out);
 }
 
 template <class T>
 bool Simple8BIntV2<T>::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const {
-  return __simple8b_detail::V2Decompress<T>(data, count, out);
+  return _simple8b_detail::V2Decompress<T>(data, count, out);
 }
 
 bool BitPacking::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
@@ -938,7 +959,6 @@ CompressorManager::CompressorManager() {
   ts_comp_[TsCompAlg::kSimple8B_u32] = &ConcreateTsCompressor<Simple8BInt<uint32_t>>::GetInstance();
   ts_comp_[TsCompAlg::kSimple8B_u64] = &ConcreateTsCompressor<Simple8BInt<uint64_t>>::GetInstance();
 
-
   ts_comp_[TsCompAlg::kSimple8B_V2_s8] = &ConcreateTsCompressor<Simple8BIntV2<int8_t>>::GetInstance();
   ts_comp_[TsCompAlg::kSimple8B_V2_s16] = &ConcreateTsCompressor<Simple8BIntV2<int16_t>>::GetInstance();
   ts_comp_[TsCompAlg::kSimple8B_V2_s32] = &ConcreateTsCompressor<Simple8BIntV2<int32_t>>::GetInstance();
@@ -971,7 +991,6 @@ auto CompressorManager::GetCompressor(TsCompAlg first, GenCompAlg second) const 
     if (it != ts_comp_.end()) first_comp = it->second;
   }
   {
-    // TODO(qinlipeng): add other compress type
     auto it = general_compressor_.find(second);
     if (it != general_compressor_.end()) second_comp = it->second;
   }

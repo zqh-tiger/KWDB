@@ -320,8 +320,9 @@ char* TsEntityBlock::GetMetricColAddr(uint32_t col_idx) {
 KStatus TsEntityBlock::GetMetricColValue(uint32_t row_idx, uint32_t col_idx, TSSlice& value) {
   assert(col_idx < column_blocks_.size() - 1);
   assert(row_idx < n_rows_);
+  assert(metric_schema_ != nullptr);
 
-  if (metric_schema_ != nullptr && isVarLenType((*metric_schema_)[col_idx].type)) {
+  if (isVarLenType((*metric_schema_)[col_idx].type)) {
     char* ptr = column_blocks_[col_idx + 1]->buffer.data();
     uint32_t offset = 0;
     if (row_idx != 0) {
@@ -882,7 +883,8 @@ KStatus TsSegmentFile::GetColumnBlock(int32_t col_idx, const std::vector<Attribu
   block->WrLock();
   Defer defer([&]() { block->Unlock(); });
   // init block info
-  if (block->GetBlockInfo().col_block_offset.empty()) {
+  if (!block_file_.IsFIOMode() || block->GetBlockInfo().col_block_offset.empty()) {
+    // In mmap / memory mode, we should always read block info since the memory address could change.
     TsSliceGuard buffer;
     KStatus s = block_file_.ReadData(block->GetBlockOffset(), &buffer, sizeof(uint32_t) * block->GetNCols());
     if (s != KStatus::SUCCESS) {
