@@ -943,7 +943,6 @@ CompressorManager::CompressorManager() {
   algs_level_[GenCompAlg::kLz4] = {2, 1, 2, 3};
   algs_level_[GenCompAlg::kSnappy] = {1, 1, 1, 1};
   algs_level_[GenCompAlg::kZstd] = {11, 1, 11, 22};
-  algs_level_[GenCompAlg::kLzma] = {6, 1, 6, 9};
   algs_level_[GenCompAlg::kZlib] = {6, 1, 6, 9};
 
   // 2. construct encoding algorithms.
@@ -1030,9 +1029,9 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype,
   case roachpb::KW_COL_COMPRESS_TYPE_UNSPECIFIED: {
     auto it = default_algs_.find(dtype);
     if (it != default_algs_.end()) {
-      first = std::get<0>(it->second);
+      second = std::get<1>(it->second);
     } else {
-      first = TsCompAlg::kPlain;
+      second = GenCompAlg::kPlain;
     }
     break;
   }

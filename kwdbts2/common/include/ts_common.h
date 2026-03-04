@@ -153,14 +153,9 @@ enum class TsCompAlg : uint16_t {
 enum class GenCompAlg : uint16_t {
   kPlain = 0,
   kSnappy = 1,
-  kGzip = 2,
-  kLzo = 3,
-  kLz4 = 4,
-  kXz = 5,
-  kZstd = 6,
-  kLzma = 7,
-  kZlib = 8,
-  kTsz = 9,
+  kLz4 = 2,
+  kZstd = 3,
+  kZlib = 4,
   kDisabled = 10,
   GEN_COMP_ALG_LAST
 };
