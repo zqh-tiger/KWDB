@@ -363,8 +363,8 @@ class ZLIBString : public CompressorImpl {
       }
 
       uint64_t org_size = DecodeFixed64(data.data);
-      std::vector<Bytef> out_buffer(org_size);
-      zs.next_out = out_buffer.data();
+      TsBufferBuilder builder(org_size);
+      zs.next_out = reinterpret_cast<Bytef*>(builder.data());
       zs.avail_out = org_size;
 
       zs.next_in = reinterpret_cast<Bytef*>(data.data + 8);
@@ -377,7 +377,7 @@ class ZLIBString : public CompressorImpl {
         return false;
       }
       inflateEnd(&zs);
-      *out = TsSliceGuard(reinterpret_cast<char*>(out_buffer.data()), org_size);
+      *out = builder.GetBuffer();
       return true;
     }
 
