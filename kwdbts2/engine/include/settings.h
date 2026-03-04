@@ -113,6 +113,7 @@ struct EngineOptions {
   static size_t last_cache_max_size;
   static double block_filter_sampling_ratio;
   static int count_stats_recalc_cycle;
+  static bool force_re_compress;
   static uint32_t metric_schema_cache_capacity;
   static GenCompAlg compression_algorithm;
 };
