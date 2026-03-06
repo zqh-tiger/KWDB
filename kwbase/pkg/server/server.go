@@ -994,7 +994,7 @@ func NewServer(cfg Config, stopper *stop.Stopper) (*Server, error) {
 
 		ExecLogger: log.NewSecondaryLogger(
 			loggerCtx, nil /* dirName */, "sql-exec",
-			true           /* enableGc */, false /*forceSyncWrites*/, true, /* enableMsgCount */
+			true /* enableGc */, false /*forceSyncWrites*/, true, /* enableMsgCount */
 		),
 
 		// Note: the auth logger uses sync writes because we don't want an
@@ -1008,7 +1008,7 @@ func NewServer(cfg Config, stopper *stop.Stopper) (*Server, error) {
 		// would be a good reason to invest into a syslog sink for logs.
 		AuthLogger: log.NewSecondaryLogger(
 			loggerCtx, nil /* dirName */, "auth",
-			true           /* enableGc */, true /*forceSyncWrites*/, true, /* enableMsgCount */
+			true /* enableGc */, true /*forceSyncWrites*/, true, /* enableMsgCount */
 		),
 
 		// AuditLogger syncs to disk for the same reason as AuthLogger.
