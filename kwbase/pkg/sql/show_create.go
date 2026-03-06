@@ -96,9 +96,6 @@ func ShowCreateTable(
 	}
 	f.WriteString("TABLE ")
 	f.FormatNode(tn)
-	//if tn.String() == "t11" {
-	//	f.WriteString("====")
-	//}
 	f.WriteString(" (")
 	primaryKeyIsOnVisibleColumn := false
 	visibleCols := desc.VisibleColumns()
