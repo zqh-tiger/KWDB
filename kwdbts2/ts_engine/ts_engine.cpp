@@ -59,7 +59,7 @@ double EngineOptions::block_filter_sampling_ratio = 0.2;
 int EngineOptions::count_stats_recalc_cycle = 60 * 5;
 uint32_t EngineOptions::metric_schema_cache_capacity = 100;
 bool EngineOptions::force_re_compress = false;
-GenCompAlg EngineOptions::compression_algorithm = GenCompAlg::kPlain;
+GenCompAlg EngineOptions::compression_algorithm = GenCompAlg::kLz4;
 
 extern std::map<std::string, std::string> g_cluster_settings;
 extern std::shared_mutex g_settings_mutex;
@@ -70,10 +70,10 @@ namespace kwdbts {
 unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
 std::mt19937 gen(seed);
 const char schema_directory[] = "schema";
-constexpr char vroup_cfg_file[] = "ts-vgroup.cfg";
+constexpr char vgroup_cfg_file[] = "ts-vgroup.cfg";
 
 KStatus loadVGroupCfg(const fs::path& ts_store_path, std::map<int, std::string>& vgroup_cfg) {
-  fs::path vgroup_cfg_path = ts_store_path / std::string(vroup_cfg_file);
+  fs::path vgroup_cfg_path = ts_store_path / std::string(vgroup_cfg_file);
   std::ifstream ifs(vgroup_cfg_path);
   if (!ifs.is_open()) {
     return SUCCESS;

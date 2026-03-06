@@ -20,6 +20,7 @@
 #include "kwdb_type.h"
 #include "lg_api.h"
 #include "libkwdbts2.h"
+#include "settings.h"
 #include "ts_bitmap.h"
 #include "ts_bufferbuilder.h"
 #include "ts_coding.h"
@@ -144,7 +145,7 @@ bool TsColumnBlock::GetCompressedData(TsBufferBuilder* out, TsColumnCompressInfo
   // 3. compress varchar data
   if (!varchar_guard_.empty()) {
     tmp.clear();
-    auto comp_alg = compress ? GenCompAlg::kSnappy : GenCompAlg::kPlain;
+    auto comp_alg = compress ? EngineOptions::compression_algorithm : GenCompAlg::kPlain;
     ok = mgr.CompressVarchar(varchar_guard_.AsSlice(), &tmp, comp_alg, col_schema_.compress_level);
     if (!ok) {
       return false;

@@ -867,6 +867,190 @@ bool BitPacking::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) con
   return out->size() == count;
 }
 
+bool SnappyString::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
+  out->clear();
+  snappy::ByteArraySource src(data.data, data.len);
+  BufferSink sink(out);
+  snappy::Compress(&src, &sink);
+  return true;
+}
+
+bool SnappyString::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const {
+  TsBufferBuilder builder;
+  BufferSink sink(&builder);
+  snappy::ByteArraySource src(data.data, data.len);
+  bool ok = snappy::Uncompress(&src, &sink);
+  if (!ok) {
+    return false;
+  }
+  *out = builder.GetBuffer();
+  return true;
+}
+
+size_t SnappyString::GetUncompressedSize(TSSlice data, uint64_t count) const {
+  size_t result;
+  bool ok = snappy::GetUncompressedLength(data.data, data.len, &result);
+  if (ok) {
+    return result;
+  }
+  return -1;
+}
+
+bool LZ4String::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
+  if (data.len == 0) {
+    out->append(data);
+    return true;
+  }
+  int dst_capacity  = LZ4_compressBound(data.len);
+  std::vector<char> compressed(dst_capacity);
+  int compressed_size = LZ4_compress_fast(data.data, compressed.data(), data.len, dst_capacity, level);
+  if (compressed_size == 0) {
+    LOG_ERROR("LZ4 Compress Failed!");
+    // out->append(data);
+    return false;
+  }
+  PutFixed64(out, data.len);
+  out->append(compressed.data(), compressed_size);
+  return true;
+  // maybe lz4frame if too large?
+}
+
+bool LZ4String::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const {
+  if (data.len == 0) {
+    *out = TsSliceGuard(data);
+    return true;
+  }
+  uint64_t org_size = DecodeFixed64(data.data);
+  TsBufferBuilder builder(org_size);
+  int ret_size = LZ4_decompress_safe(data.data + 8, builder.data(), data.len - 8, org_size);
+  if (ret_size != org_size) {
+    LOG_ERROR("LZ4 Decompress Failed!");
+    builder.assign(data.data, data.len);
+    *out = builder.GetBuffer();
+    return false;
+  }
+  *out = builder.GetBuffer();
+  return true;
+}
+
+size_t LZ4String::GetUncompressedSize(TSSlice data, uint64_t count) const {
+  uint64_t org_size = DecodeFixed64(data.data);
+  return org_size == 0 ? -1 : org_size;
+}
+
+bool ZSTDString::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
+  if (data.len == 0) {
+    out->append(data);
+    return true;
+  }
+  size_t dst_capacity  = ZSTD_compressBound(data.len);
+  std::vector<char> compressed(dst_capacity);
+  if (dst_capacity != 0) {
+    size_t compressed_size = ZSTD_compress(compressed.data(), dst_capacity, data.data, data.len, level);
+    if (ZSTD_isError(compressed_size)) {
+      LOG_ERROR("ZSTD Compress Failed!");
+      // out->append(data);
+      return false;
+    }
+    PutFixed64(out, data.len);
+    out->append(compressed.data(), compressed_size);
+    return true;
+  }
+  LOG_ERROR("ZSTD Compress Failed! Input size is incorrect (too large or negative).");
+  return false;
+}
+
+bool ZSTDString::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const {
+  if (data.len == 0) {
+    *out = TsSliceGuard(data);
+    return true;
+  }
+  uint64_t org_size = DecodeFixed64(data.data);
+  TsBufferBuilder builder(org_size);
+  size_t ret_size = ZSTD_decompress(builder.data(), org_size, data.data + 8, data.len - 8);
+  if (ZSTD_isError(ret_size) || ret_size != org_size) {
+    LOG_ERROR("ZSTD Decompress Failed!");
+    builder.assign(data.data, data.len);
+    *out = builder.GetBuffer();
+    return false;
+  }
+  *out = builder.GetBuffer();
+  return true;
+}
+
+size_t ZSTDString::GetUncompressedSize(TSSlice data, uint64_t count) const {
+  uint64_t org_size = DecodeFixed64(data.data);
+  return org_size == 0 ? -1 : org_size;
+}
+
+bool ZLIBString::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const {
+  if (data.len == 0) {
+    out->append(data);
+    return true;
+  }
+  z_stream zs = {};
+  if (deflateInit(&zs, level) != Z_OK) {
+    LOG_ERROR("Zlib deflateInit failed!");
+    return false;
+  }
+
+  zs.next_in = reinterpret_cast<Bytef*>(data.data);
+  zs.avail_in = data.len;
+
+  std::vector<Bytef> out_buffer(deflateBound(&zs, data.len));
+  zs.next_out = out_buffer.data();
+  zs.avail_out = out_buffer.size();
+
+  int ret = deflate(&zs, Z_FINISH);
+  if (ret != Z_STREAM_END) {
+    LOG_ERROR("Zlib deflate failed during compression! Error code:%d", ret);
+    deflateEnd(&zs);
+    return false;
+  }
+
+  size_t compressed_size = zs.total_out;
+  deflateEnd(&zs);
+  PutFixed64(out, data.len);
+  out->append(reinterpret_cast<const char*>(out_buffer.data()), compressed_size);
+  return true;
+}
+
+bool ZLIBString::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const {
+  if (data.len == 0) {
+    *out = TsSliceGuard(data);
+    return true;
+  }
+  z_stream zs;
+  memset(&zs, 0, sizeof(zs));
+  if (inflateInit(&zs) != Z_OK) {
+    LOG_ERROR("Zlib inflateInit failed!");
+    return false;
+  }
+
+  uint64_t org_size = DecodeFixed64(data.data);
+  TsBufferBuilder builder(org_size);
+  zs.next_out = reinterpret_cast<Bytef*>(builder.data());
+  zs.avail_out = org_size;
+
+  zs.next_in = reinterpret_cast<Bytef*>(data.data + 8);
+  zs.avail_in = data.len - 8;
+
+  int  ret = inflate(&zs, Z_FINISH);
+  if (ret != Z_STREAM_END) {
+    LOG_ERROR("Zlib inflate failed during decompression! Error code: %d", ret);
+    inflateEnd(&zs);
+    return false;
+  }
+  inflateEnd(&zs);
+  *out = builder.GetBuffer();
+  return true;
+}
+
+size_t ZLIBString::GetUncompressedSize(TSSlice data, uint64_t count) const {
+  uint64_t org_size = DecodeFixed64(data.data);
+  return org_size == 0 ? -1 : org_size;
+}
+
 bool CompressorManager::TwoLevelCompressor::Compress(TSSlice raw, const TsBitmapBase *bitmap,
                                                      uint32_t count, TsBufferBuilder *out, uint8_t level) const {
   if (IsPlain()) return false;
@@ -926,7 +1110,6 @@ CompressorManager::CompressorManager() {
     default_algs_[i] = {TsCompAlg::kSimple8B_V2_s64, GenCompAlg::kPlain};
   }
 
-  // TODO(qinlipeng): change default encode and compress type
   default_algs_[DATATYPE::INT16] = {TsCompAlg::kSimple8B_V2_s16, second};
   default_algs_[DATATYPE::INT32] = {TsCompAlg::kSimple8B_V2_s32, second};
   default_algs_[DATATYPE::INT64] = {TsCompAlg::kSimple8B_V2_s64, second};
@@ -976,11 +1159,6 @@ CompressorManager::CompressorManager() {
   general_compressor_[GenCompAlg::kLz4] = &ConcreateGenCompressor<LZ4String>::GetInstance();
   general_compressor_[GenCompAlg::kZstd] = &ConcreateGenCompressor<ZSTDString>::GetInstance();
   general_compressor_[GenCompAlg::kZlib] = &ConcreateGenCompressor<ZLIBString>::GetInstance();
-
-
-  // varchar varstring
-  // default_algs_[DATATYPE::VARSTRING] = {TsCompAlg::kGorilla_32, GenCompAlg::kPlain};
-  // default_algs_[DATATYPE::VARBINARY] = {TsCompAlg::kGorilla_32, GenCompAlg::kPlain};
 }
 auto CompressorManager::GetCompressor(TsCompAlg first, GenCompAlg second) const -> TwoLevelCompressor {
   const TsCompressorBase *first_comp = nullptr;
@@ -1069,9 +1247,17 @@ auto CompressorManager::GetDefaultCompressor(DATATYPE dtype) const -> TwoLevelCo
 
 bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, uint64_t count, TsBufferBuilder *output,
                                      TsCompAlg first, GenCompAlg second, uint8_t level) const {
-  if (EngineOptions::compress_stage == 0) {
+  switch (EngineOptions::compress_stage) {
+  case 0:
     first = TsCompAlg::kPlain;
     second = GenCompAlg::kPlain;
+    break;
+  case 1:
+    second = GenCompAlg::kPlain;
+    break;
+  case 3:
+    first = TsCompAlg::kPlain;
+    break;
   }
 
   static_assert(sizeof(first) == sizeof(uint16_t));

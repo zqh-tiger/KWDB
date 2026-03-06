@@ -382,7 +382,7 @@ KStatus TsBlockSpan::BuildCompressedData(TsBufferBuilder* data) {
       data->append(compressed.AsSlice());
       // var data
       compressed.clear();
-      ok = mgr.CompressVarchar({var_data.data(), var_data.size()}, &compressed, GenCompAlg::kSnappy,
+      ok = mgr.CompressVarchar({var_data.data(), var_data.size()}, &compressed, EngineOptions::compression_algorithm,
         (*scan_attrs_)[scan_idx].compress_level);
       if (!ok) {
         LOG_ERROR("Compress var data failed");
