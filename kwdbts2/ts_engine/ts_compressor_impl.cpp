@@ -1189,9 +1189,23 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype,
     }
     break;
   }
-  case roachpb::KW_COL_ENCODE_TYPE_SIMPLE8B:
-    first = TsCompAlg::kSimple8B_V2_s64;
+  case roachpb::KW_COL_ENCODE_TYPE_SIMPLE8B: {
+    switch (dtype) {
+    case DATATYPE::INT16:
+      first = TsCompAlg::kSimple8B_V2_s16;
+      break;
+    case DATATYPE::INT32:
+      first = TsCompAlg::kSimple8B_V2_s32;
+      break;
+    case DATATYPE::INT64:
+      first = TsCompAlg::kSimple8B_V2_s64;
+      break;
+    default:
+      LOG_ERROR("The data type does not match the encoding algorithm.");
+      break;
+    }
     break;
+  }
   case roachpb::KW_COL_ENCODE_TYPE_BIT_PACKING:
     first = TsCompAlg::kBitPacking;
     break;

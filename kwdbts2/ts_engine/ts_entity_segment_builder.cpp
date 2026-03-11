@@ -284,7 +284,6 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
       attr_info = metric_schema_[col_idx - 1];
     }
     auto [first, second] = mgr.GetAlgorithm(d_type, attr_info);
-    // auto [first, second] = mgr.GetDefaultAlgorithm(d_type);
     if (is_var_col) {
       // varchar offset use simple8b algorithm
       first = TsCompAlg::kSimple8B_V2_u32;
@@ -304,7 +303,7 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
       compressed.clear();
       uint32_t var_data_offset = EngineOptions::max_rows_per_block * sizeof(uint32_t);
       ok = mgr.CompressVarchar({block.buffer.data() + var_data_offset, block.buffer.size() - var_data_offset},
-                        &compressed, EngineOptions::compression_algorithm, metric_schema_[col_idx - 1].compress_level);
+                        &compressed, second, metric_schema_[col_idx - 1].compress_level);
       if (!ok) {
         LOG_ERROR("Compress var data failed");
         return KStatus::SUCCESS;
