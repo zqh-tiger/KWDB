@@ -50,7 +50,7 @@ bool GorillaInt::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) co
     return true;
   }
   assert(data.len == count * dsize);
-  out->reserve(dsize * count);
+  out->reserve(out->size() + dsize * count);
   TsBitWriter writer(out);
   int64_t *ts_data = reinterpret_cast<int64_t *>(data.data);
 
@@ -218,7 +218,7 @@ bool GorillaIntV2<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *ou
     return true;
   }
   assert(data.len == count * stride);
-  out->reserve(stride * count);
+  out->reserve(out->size() + stride * count);
   T *ts_data = reinterpret_cast<T *>(data.data);
 
   // 1. record the first timestamp;
@@ -297,7 +297,6 @@ template <class T>
 bool Chimp<T>::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const {
   assert(data.len == sizeof(T) * count);
   auto sz = sizeof(T) * 8;
-  out->clear();
 
   if (count == 0) {
     return true;  // no data, no need to compress
@@ -465,7 +464,6 @@ static inline T DecodeZigZagIfNeeded(std::make_unsigned_t<T> v) {
 template <typename T>
 static bool CompressImplGreedy(const T *data, uint64_t count, TsBufferBuilder *out) {
   static_assert(std::is_integral_v<T>);
-  out->clear();
   for (int i = 0; i < count;) {
     auto data_i = EncodeZigZagIfNeeded(data[i]);
     int valid_nbits = GetValidBits(data_i);
@@ -609,7 +607,6 @@ bool V2CompressImplGreedy(const T *data, uint64_t count, TsBufferBuilder *out) {
   if (count == 0) {
     return true;
   }
-  out->clear();
 
   if constexpr (sizeof(T) >= 4) {
     auto v1 = EncodeZigZagIfNeeded(data[0]);
@@ -868,23 +865,27 @@ bool BitPacking::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) con
 }
 
 bool CompressorManager::TwoLevelCompressor::Compress(TSSlice raw, const TsBitmapBase *bitmap,
-                                                     uint32_t count, TsBufferBuilder *out) const {
+                                                      uint32_t count, TsBufferBuilder *out,
+                                                      TsBufferBuilder* first_out) const {
   if (IsPlain()) return false;
-  TsBufferBuilder buf;
   TSSlice data;
-  bool ok = true;
   if (first_ == nullptr) {
+    if (second_ == nullptr) {
+      return true;
+    }
     data = raw;
   } else {
-    ok = first_->Compress(raw, bitmap, count, &buf);
-    data = buf.AsSlice();
-  }
-  if (!ok) {
-    return false;
-  }
-  if (second_ == nullptr) {
-    *out = std::move(buf);
-    return true;
+    if (second_ == nullptr) {
+      return first_->Compress(raw, bitmap, count, out);
+    } else {
+      bool ok = true;
+      first_out->clear();
+      ok = first_->Compress(raw, bitmap, count, first_out);
+      if (!ok) {
+        return false;
+      }
+      data = first_out->AsSlice();
+    }
   }
   return second_->Compress(data, out);
 }
@@ -1006,17 +1007,15 @@ bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, 
   static_assert(sizeof(first) == sizeof(uint16_t));
   static_assert(sizeof(second) == sizeof(uint16_t));
   auto compressor = GetCompressor(first, second);
-  TsBufferBuilder tmp;
-  bool ok = compressor.Compress(input, bitmap, count, &tmp);
+  PutFixed16(output, static_cast<uint16_t>(first));
+  PutFixed16(output, static_cast<uint16_t>(second));
+  bool ok = compressor.Compress(input, bitmap, count, output);
   if (!ok) {
     first = TsCompAlg::kPlain;
     second = GenCompAlg::kPlain;
-  }
-  PutFixed16(output, static_cast<uint16_t>(first));
-  PutFixed16(output, static_cast<uint16_t>(second));
-  if (ok) {
-    output->append(tmp.AsSlice());
-  } else {
+    output->resize(output->size() - 2 * sizeof(uint16_t));
+    PutFixed16(output, static_cast<uint16_t>(first));
+    PutFixed16(output, static_cast<uint16_t>(second));
     output->append(input.data, input.len);
   }
   return true;

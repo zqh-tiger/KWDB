@@ -173,7 +173,6 @@ class SnappyString : public CompressorImpl {
     return inst;
   }
   bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out) const override {
-    out->clear();
     snappy::ByteArraySource src(data.data, data.len);
     BufferSink sink(out);
     snappy::Compress(&src, &sink);
@@ -213,7 +212,6 @@ class ConcreateTsCompressor : public TsCompressorBase {
   }
   bool Compress(TSSlice raw, const TsBitmapBase *bitmap, uint32_t count,
                 TsBufferBuilder *out) const override {
-    out->clear();
     assert(bitmap == nullptr || bitmap->GetCount() == count);
     int stride = Compressor::stride;
     if (stride < 0 || bitmap == nullptr || bitmap->IsAllValid()) {
@@ -223,7 +221,7 @@ class ConcreateTsCompressor : public TsCompressorBase {
 
     TsBufferBuilder valid_data;
     const char *data = raw.data;
-    out->reserve(bitmap->GetValidCount() * stride);
+    out->reserve(out->size() + bitmap->GetValidCount() * stride);
     for (int i = 0; i < count; ++i) {
       if ((*bitmap)[i] != kValid) continue;
       valid_data.append(data + i * stride, stride);

@@ -95,17 +95,16 @@ KStatus TsColumnBlock::GetValueSlice(int row_num, TSSlice& value) {
 
 bool TsColumnBlock::GetCompressedData(TsBufferBuilder* out, TsColumnCompressInfo* info, bool compress) {
   const auto& mgr = CompressorManager::GetInstance();
-  TsBufferBuilder compressed_data;
   info->row_count = count_;
 
   // 1. compress bitmap;
   // TODO(zzr) bitmap compression algorithms;
   assert(count_ == bitmap_->GetCount());
-  mgr.CompressBitmap(bitmap_.get(), &compressed_data);
-  info->bitmap_len = compressed_data.size();
+  size_t origin_size = out->size();
+  mgr.CompressBitmap(bitmap_.get(), out);
+  info->bitmap_len = out->size() - origin_size;
 
   // 2. compress fixlen data
-  TsBufferBuilder tmp;
   TsBitmapBase* p_bitmap = bitmap_.get();
   auto [first, second] = mgr.GetDefaultAlgorithm(static_cast<DATATYPE>(col_schema_.type));
   if (isVarLenType(col_schema_.type)) {
@@ -133,27 +132,25 @@ bool TsColumnBlock::GetCompressedData(TsBufferBuilder* out, TsColumnCompressInfo
     second = GenCompAlg::kPlain;
   }
 
-  bool ok = mgr.CompressData(input, p_bitmap, count_, &tmp, first, second);
+  origin_size = out->size();
+  bool ok = mgr.CompressData(input, p_bitmap, count_, out, first, second);
   if (!ok) {
     return false;
   }
-  info->fixdata_len = tmp.size();
-  compressed_data.append(tmp);
+  info->fixdata_len = out->size() - origin_size;
 
   // 3. compress varchar data
   if (!varchar_guard_.empty()) {
-    tmp.clear();
+    origin_size = out->size();
     auto comp_alg = compress ? GenCompAlg::kSnappy : GenCompAlg::kPlain;
-    ok = mgr.CompressVarchar(varchar_guard_.AsSlice(), &tmp, comp_alg);
+    ok = mgr.CompressVarchar(varchar_guard_.AsSlice(), out, comp_alg);
     if (!ok) {
       return false;
     }
-    info->vardata_len = tmp.size();
-    compressed_data.append(tmp);
+    info->vardata_len = out->size() - origin_size;
   } else {
     info->vardata_len = 0;
   }
-  *out = std::move(compressed_data);
   return true;
 }
 

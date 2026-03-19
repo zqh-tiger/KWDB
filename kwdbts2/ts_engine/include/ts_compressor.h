@@ -100,7 +100,8 @@ class CompressorManager {
       first_algo_ = first == nullptr ? TsCompAlg::kPlain : first_algo;
       second_algo_ = second == nullptr ? GenCompAlg::kPlain : second_algo;
     }
-    bool Compress(TSSlice raw, const TsBitmapBase* bitmap, uint32_t count, TsBufferBuilder* out) const;
+    bool Compress(TSSlice raw, const TsBitmapBase* bitmap, uint32_t count,
+                  TsBufferBuilder* out, TsBufferBuilder* first_out) const;
 
     bool Decompress(TSSlice raw, const TsBitmapBase* bitmap, uint32_t count, TsSliceGuard* out) const;
     bool IsPlain() const { return (first_ == nullptr && second_ == nullptr); }

@@ -23,40 +23,35 @@
 
 namespace kwdbts {
 
-bool TsMetricBlock::GetCompressedData(TsBufferBuilder* output, TsMetricCompressInfo* compress_info,
+bool TsMetricBlock::GetCompressedData(TsBufferBuilder& output, TsMetricCompressInfo* compress_info,
                                       bool compress_ts_and_osn, bool compress_columns) {
-  TsBufferBuilder compressed_data;
   const auto& mgr = CompressorManager::GetInstance();
   // 1. Compress OSN
   TSSlice osn_slice{reinterpret_cast<char*>(osn_buffer_.data()), osn_buffer_.size() * sizeof(uint64_t)};
   TsCompAlg osn_alg = compress_ts_and_osn ? TsCompAlg::kSimple8B_u64 : TsCompAlg::kPlain;
-  auto ok = mgr.CompressData(osn_slice, nullptr, count_, &compressed_data, osn_alg, GenCompAlg::kPlain);
+  auto ok = mgr.CompressData(osn_slice, nullptr, count_, &output, osn_alg, GenCompAlg::kPlain);
   if (!ok) {
     LOG_ERROR("compress osn error");
     return FAIL;
   }
-  compress_info->osn_len = compressed_data.size();
+  compress_info->osn_len = output.size();
   size_t offset = compress_info->osn_len;
 
   // 2. Compress column data
   compress_info->column_compress_infos.resize(column_blocks_.size());
   compress_info->column_data_segments.resize(column_blocks_.size());
-  TsBufferBuilder tmp;
   TsColumnCompressInfo col_compress_info;
   for (int i = 0; i < column_blocks_.size(); i++) {
-    tmp.clear();
-    ok = column_blocks_[i]->GetCompressedData(&tmp, &col_compress_info, compress_columns);
+    ok = column_blocks_[i]->GetCompressedData(&output, &col_compress_info, compress_columns);
     if (!ok) {
       LOG_ERROR("compress column data error");
       return FAIL;
     }
-    compressed_data.append(tmp);
     compress_info->column_compress_infos[i] = col_compress_info;
     compress_info->column_data_segments[i] = {offset, tmp.size()};
     offset += tmp.size();
   }
   compress_info->row_count = count_;
-  *output = std::move(compressed_data);
   return SUCCESS;
 }
 
