@@ -864,9 +864,10 @@ bool BitPacking::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) con
   return out->size() == count;
 }
 
+thread_local TsBufferBuilder tl_first_out;
+
 bool CompressorManager::TwoLevelCompressor::Compress(TSSlice raw, const TsBitmapBase *bitmap,
-                                                      uint32_t count, TsBufferBuilder *out,
-                                                      TsBufferBuilder* first_out) const {
+                                                      uint32_t count, TsBufferBuilder *out) const {
   if (IsPlain()) return false;
   TSSlice data;
   if (first_ == nullptr) {
@@ -879,12 +880,12 @@ bool CompressorManager::TwoLevelCompressor::Compress(TSSlice raw, const TsBitmap
       return first_->Compress(raw, bitmap, count, out);
     } else {
       bool ok = true;
-      first_out->clear();
-      ok = first_->Compress(raw, bitmap, count, first_out);
+      tl_first_out.clear();
+      ok = first_->Compress(raw, bitmap, count, &tl_first_out);
       if (!ok) {
         return false;
       }
-      data = first_out->AsSlice();
+      data = tl_first_out.AsSlice();
     }
   }
   return second_->Compress(data, out);

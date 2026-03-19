@@ -29,12 +29,13 @@ bool TsMetricBlock::GetCompressedData(TsBufferBuilder& output, TsMetricCompressI
   // 1. Compress OSN
   TSSlice osn_slice{reinterpret_cast<char*>(osn_buffer_.data()), osn_buffer_.size() * sizeof(uint64_t)};
   TsCompAlg osn_alg = compress_ts_and_osn ? TsCompAlg::kSimple8B_u64 : TsCompAlg::kPlain;
+  size_t origin_size = output.size();
   auto ok = mgr.CompressData(osn_slice, nullptr, count_, &output, osn_alg, GenCompAlg::kPlain);
   if (!ok) {
     LOG_ERROR("compress osn error");
     return FAIL;
   }
-  compress_info->osn_len = output.size();
+  compress_info->osn_len = output.size() - origin_size;
   size_t offset = compress_info->osn_len;
 
   // 2. Compress column data
@@ -42,14 +43,15 @@ bool TsMetricBlock::GetCompressedData(TsBufferBuilder& output, TsMetricCompressI
   compress_info->column_data_segments.resize(column_blocks_.size());
   TsColumnCompressInfo col_compress_info;
   for (int i = 0; i < column_blocks_.size(); i++) {
+    origin_size = output.size();
     ok = column_blocks_[i]->GetCompressedData(&output, &col_compress_info, compress_columns);
     if (!ok) {
       LOG_ERROR("compress column data error");
       return FAIL;
     }
     compress_info->column_compress_infos[i] = col_compress_info;
-    compress_info->column_data_segments[i] = {offset, tmp.size()};
-    offset += tmp.size();
+    compress_info->column_data_segments[i] = {offset, output.size() - origin_size};
+    offset += output.size() - origin_size;
   }
   compress_info->row_count = count_;
   return SUCCESS;
