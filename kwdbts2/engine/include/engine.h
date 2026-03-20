@@ -205,6 +205,16 @@ struct TSEngine {
                                  std::vector<std::string> primary_tags, uint64_t *count, uint64_t mtr_id,
                                  bool& is_dropped, uint64_t osn = 0) = 0;
 
+  virtual KStatus DeleteEntityByTag(kwdbContext_p ctx, const KTableKey& table_id, bool& is_dropped,
+                                    const std::vector<uint32_t/*index_id*/> &tags_index_id,
+                                    std::vector<std::string> tags, uint64_t* count, uint64_t mtr_id,
+                                    const HashIdSpan& hash_span, uint64_t osn = 0) = 0;
+
+  virtual KStatus DeleteMetricByTag(kwdbContext_p ctx, const KTableKey& table_id, bool& is_dropped,
+                            const std::vector<uint32_t/*index_id*/> &tags_index_id,
+                            std::vector<std::string> tags, const std::vector<KwTsSpan>& ts_spans,
+                            uint64_t* count, uint64_t mtr_id, const HashIdSpan& hash_span, uint64_t osn = 0) = 0;
+
   /**
  * @brief Count data of some specified entities within a specified time range by marking
  * @param[in] table_id    ID of the time series table
@@ -373,7 +383,7 @@ struct TSEngine {
   }
 
   virtual KStatus WriteBatchData(kwdbContext_p ctx, TSTableID table_id, uint64_t table_version, uint64_t job_id,
-                                 TSSlice* data, uint32_t* row_num, bool& is_dropped) {
+                                 TSSlice* data, uint32_t* row_num, TsDataSource source, bool& is_dropped) {
     return FAIL;
   }
 

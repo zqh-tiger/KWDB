@@ -37,15 +37,6 @@ TsTableV2Impl::~TsTableV2Impl() {
   // }
 }
 
-void TsTableV2Impl::SetDropped() {
-  table_dropped_.store(true);
-  table_schema_mgr_->SetDropped();
-}
-
-bool TsTableV2Impl::IsDropped() {
-  return table_dropped_.load();
-}
-
 KStatus TsTableV2Impl::PutData(kwdbContext_p ctx, TsVGroup* v_group, TSSlice* payload, int payload_num,
                           uint64_t mtr_id, TSEntityID entity_id, uint32_t* inc_unordered_cnt,
                           DedupResult* dedup_result, const DedupRule& dedup_rule, bool write_wal) {
@@ -536,6 +527,11 @@ KwTsSpan ts_span, uint64_t mtr_id, uint64_t osn) {
     LOG_ERROR("DeleteRangeEntities failed.");
     return s;
   }
+  if (table_schema_mgr_->IsDropped()) {
+    LOG_WARN("table[%lu] is dropped. DeleteTotalRange skip end.", table_id_);
+    return KStatus::SUCCESS;
+  }
+
   // mark all deleted tags to delete_by_snapshot.
   s = TrasvalAllTagPtable(ctx, [&](TagPartitionTable* entity_tag_bt, size_t vec_idx) -> bool {
     for (int rownum = 1; rownum <= entity_tag_bt->size(); rownum++) {
@@ -827,6 +823,67 @@ KStatus TsTableV2Impl::DeleteData(kwdbContext_p ctx, uint64_t range_group_id, st
   }
   GetVGroupByID(v_group_id)->ResetEntityMaxTs(table_id_, max_ts, entity_id);
   GetVGroupByID(v_group_id)->ResetEntityLatestRow(entity_id, max_ts);
+  return KStatus::SUCCESS;
+}
+
+KStatus TsTableV2Impl::DeleteEntityByTag(kwdbContext_p ctx, const std::vector<uint32_t/*index_id*/> &tags_index_id,
+                        std::vector<std::string> tags, uint64_t* count, uint64_t mtr_id, uint64_t osn,
+                        uint32_t cur_table_version, const HashIdSpan& hash_span) {
+  *count = 0;
+  auto tag_table = table_schema_mgr_->GetTagTable();
+
+  // 1. get ptag and entityid by tag
+  std::vector<std::pair<TableVersionID, TagPartitionTableRowID>> row_ids;
+  std::vector<uint64_t> range_group_ids;
+  if (tag_table->GetTagInfoByTag(tags_index_id, tags, row_ids, range_group_ids, cur_table_version, hash_span) < 0) {
+    LOG_ERROR("Failed to GetTagInfoByTag.")
+    return KStatus::FAIL;
+  }
+
+  // 2. delete metric && tag data by ptag
+  std::vector<std::string> primary_tags;
+  for (auto it : row_ids) {
+    auto tag_part_table = tag_table->GetTagPartitionTableManager()->GetPartitionTable(it.first);
+    string primary_tag(reinterpret_cast<char*>(tag_part_table->record(it.second)),
+                       tag_part_table->primaryTagSize());
+    primary_tags.emplace_back(primary_tag);
+  }
+  return DeleteEntities(ctx, primary_tags, count, 0, osn, true);
+}
+
+KStatus TsTableV2Impl::DeleteMetricByTag(kwdbContext_p ctx, const std::vector<uint32_t/*index_id*/> &tags_index_id,
+                                         std::vector<std::string> tags, const std::vector<KwTsSpan>& ts_spans,
+                                         uint64_t* count, uint64_t mtr_id, uint64_t osn, uint32_t cur_table_version,
+                                         const HashIdSpan& hash_span) {
+  *count = 0;
+  uint64_t loop_count = 0;
+  auto tag_table = table_schema_mgr_->GetTagTable();
+
+  // 1. get ptag and entityid by tag
+  std::vector<std::pair<TableVersionID, TagPartitionTableRowID>> row_ids;
+  std::vector<uint64_t> range_group_ids;
+  if (tag_table->GetTagInfoByTag(tags_index_id, tags, row_ids, range_group_ids, cur_table_version, hash_span) < 0) {
+    LOG_ERROR("Failed to GetTagInfoByTag.")
+    return KStatus::FAIL;
+  }
+
+  // 2. delete metric && tag data by ptag
+  std::vector<std::string> primary_tags;
+  for (auto it : row_ids) {
+    auto tag_part_table = tag_table->GetTagPartitionTableManager()->GetPartitionTable(it.first);
+    string primary_tag(reinterpret_cast<char*>(tag_part_table->record(it.second)),
+                       tag_part_table->primaryTagSize());
+    primary_tags.emplace_back(primary_tag);
+  }
+  KStatus status;
+  for (int i = 0; i < primary_tags.size(); i++) {
+    if (DeleteData(ctx, range_group_ids[i], primary_tags[i], ts_spans, &loop_count, mtr_id, osn) != KStatus::SUCCESS) {
+      LOG_ERROR("Failed to DeleteData with range_group_id[%lu].", range_group_ids[i])
+      return KStatus::FAIL;
+    }
+    *count += loop_count;
+  }
+
   return KStatus::SUCCESS;
 }
 

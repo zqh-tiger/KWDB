@@ -16,6 +16,7 @@
 #include "mmap/mmap_tag_table.h"
 #include "mmap/mmap_ptag_hash_index.h"
 #include "ts_table.h"
+#include "ts_io.h"
 
 TagTable::TagTable(const std::string& db_path,
                    const std::string& sub_path,
@@ -45,6 +46,10 @@ TagTable::~TagTable() {
 int TagTable::create(const vector<TagInfo> &schema, uint32_t table_version,
                      const std::vector<roachpb::NTagIndexInfo>& idx_info, ErrorInfo &err_info) {
   LOG_INFO("Create TagTable table_version:%d", table_version)
+  auto s = TsIOEnv::GetInstance().NewDirectory(fs::path(m_db_path_) / fs::path(m_tbl_sub_path_));
+  if (s != SUCCESS) {
+    return -1;
+  }
   // 1. create table version
   m_version_mgr_ = KNEW TagTableVersionManager(m_db_path_, m_tbl_sub_path_, m_table_id);
   if (m_version_mgr_ == nullptr) {
@@ -224,10 +229,6 @@ int TagTable::remove(ErrorInfo &err_info) {
 
 // check ptag exist
 bool TagTable::hasPrimaryKey(const char* primary_tag_val, int len, uint32_t& entity_id, uint32_t& sub_group_id) {
-  mutexLock();
-  Defer defer{[&]() {
-    mutexUnlock();
-  }};
   auto ret = m_index_->get(primary_tag_val, len);
   if (ret.first == INVALID_TABLE_VERSION_ID) {
     return false;
@@ -970,6 +971,99 @@ int TagTable::GetColumnsByRownumLocked(TableVersion src_table_version, uint32_t 
     return err_code;
   }
   src_tag_partition_tbl->stopRead();
+  return 0;
+}
+
+int TagTable::GetTagInfoByTag(const std::vector<uint32_t/*index_id*/> &tags_index_id,
+                   const std::vector<std::string> tags, std::vector<std::pair<TableVersionID, TagPartitionTableRowID>>& row_id,
+                   std::vector<uint64_t>& range_group_ids, uint32_t cur_table_version, const HashIdSpan& hash_span) {
+  // i. getColumnsByRowNum
+  // ii. memcmp ? store RowNum : continue
+  // iii. getEntityIDByRowNum & string primary_tag(reinterpret_cast<char*>(entity_tag_bt->record(rownum)),
+  //                                                  entity_tag_bt->primaryTagSize()); to get ptag
+  std::vector<std::pair<uint32_t, TagPartitionTable*>> tag_part_tables{};
+  GetTagPartitionTableManager()->GetAllPartitionTables(tag_part_tables);
+
+  TagVersionObject *obj = m_version_mgr_->GetVersionObject(cur_table_version);
+  if (nullptr == obj) {
+    return -1;
+  }
+  auto all_schema = obj->getIncludeDroppedSchemaInfos();
+
+  std::vector<uint32_t> result_scan_tags_idx;
+  std::vector<uint32_t> src_scan_tags_idx;
+  for(const auto& tag_idx : tags_index_id) {
+    for (int idx = 0; idx <= all_schema.size(); idx++) {
+      if (all_schema[idx].m_id == tag_idx) {
+        result_scan_tags_idx.emplace_back(idx);
+        break;
+      }
+      if (idx == all_schema.size() - 1) {
+        LOG_ERROR("Get Wrong Tag Idx.")
+        return -1;
+      }
+    }
+  }
+
+  for (auto it : tag_part_tables) {
+    auto tag_part_table = it.second;
+    if (nullptr == tag_part_table) {
+      LOG_ERROR("GetPartitionTable not found. table_version: %u ", it.first);
+      return -1;
+    }
+    src_scan_tags_idx.clear();
+    for(int i = 0; i < tags_index_id.size(); ++i) {
+      if (result_scan_tags_idx[i] >= tag_part_table->getIncludeDroppedSchemaInfos().size()) {
+        src_scan_tags_idx.push_back(INVALID_COL_IDX);
+      } else {
+        src_scan_tags_idx.push_back(result_scan_tags_idx[i]);
+      }
+    }
+
+    tag_part_table->startRead();
+    for (int rownum = 1; rownum <= tag_part_table->size(); rownum++) {
+      if (!EngineOptions::isSingleNode()) {
+        uint32_t tag_hash;
+        tag_part_table->getHashpointByRowNum(rownum, &tag_hash);
+        if (tag_hash < hash_span.begin || tag_hash > hash_span.end) {
+          continue;
+        }
+      }
+      if (!tag_part_table->isValidRow(rownum)) {
+        continue;
+      }
+      kwdbts::ResultSet res;
+      //2. read data
+
+      // tag column
+      int err_code = 0;
+      if ((err_code = tag_part_table->getColumnsByRownum(
+              rownum, src_scan_tags_idx,
+              all_schema,
+              &res)) < 0) {
+        tag_part_table->stopRead();
+        return err_code;
+      }
+//      res.data.data()->at(0)->mem
+      uint32_t entity_id, group_id;
+      for (int i = 0; i < tags_index_id.size(); i++) {
+        auto col_val = res.data[i];
+        if (col_val.at(0)->mem == nullptr) {
+          break;
+        }
+        if (memcmp(col_val.at(0)->mem, tags[i].data(), all_schema[src_scan_tags_idx[i]].m_size) != 0) {
+          break;
+        }
+        if (i == tags_index_id.size() - 1) {
+          row_id.emplace_back(it.first, rownum);
+          tag_part_table->getEntityIdGroupId(rownum, entity_id, group_id);
+          uint64_t joint_entity_id = (static_cast<uint64_t>(entity_id) << 32) | group_id;
+          range_group_ids.emplace_back(joint_entity_id);
+        }
+      }
+    }
+    tag_part_table->stopRead();
+  }
   return 0;
 }
 

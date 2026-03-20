@@ -165,6 +165,16 @@ enum SortOrder {
   DESC,
 };
 
+enum TsDataSource {
+  None = 0,
+  Compact = 1,
+  Flush = 2,
+  Snapshot = 3,
+  Restore = 4,
+  ScheduleVacuum = 5,
+  ManualVacuum = 6,
+};
+
 enum CompressLevel {
   LOW = 0,
   MEDIUM,

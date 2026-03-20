@@ -82,6 +82,10 @@ class TsBlock {
 
   virtual void GetMinAndMaxOSN(uint64_t& min_osn, uint64_t& max_osn) = 0;
 
+  virtual void GetMinAndMaxOSN(int start_row, int row_num, uint64_t& min_osn, uint64_t& max_osn) = 0;
+
+  virtual uint64_t GetOSN(int row_num) = 0;
+
   virtual uint64_t GetFirstOSN() = 0;
 
   virtual uint64_t GetLastOSN() = 0;
@@ -196,32 +200,32 @@ class TsBlockSpan {
   void GetMinAndMaxOSN(uint64_t& min_osn, uint64_t& max_osn, TsScanStats* ts_scan_stats = nullptr) const {
     if (nrow_ == block_->GetRowNum()) {
       block_->GetMinAndMaxOSN(min_osn, max_osn);
+      if (min_osn == UINT64_MAX || max_osn == 0) {
+        min_osn = UINT64_MAX;
+        max_osn = 0;
+        block_->GetMinAndMaxOSN(start_row_, nrow_, min_osn, max_osn);
+      }
     } else {
       min_osn = UINT64_MAX;
       max_osn = 0;
-      for (int i = start_row_; i < start_row_ + nrow_; i++) {
-        uint64_t cur_osn = *block_->GetOSNAddr(i, ts_scan_stats);
-        if (cur_osn < min_osn) {
-          min_osn = cur_osn;
-        }
-        if (cur_osn > max_osn) {
-          max_osn = cur_osn;
-        }
-      }
+      block_->GetMinAndMaxOSN(start_row_, nrow_, min_osn, max_osn);
     }
   }
+
   uint64_t GetFirstOSN(TsScanStats* ts_scan_stats = nullptr) const {
     if (start_row_ == 0) {
-      return block_->GetFirstOSN();
+      uint64_t osn = block_->GetFirstOSN();
+      return osn != 0 ? osn : block_->GetOSN(start_row_);
     } else {
-      return *block_->GetOSNAddr(start_row_, ts_scan_stats);
+      return block_->GetOSN(start_row_);
     }
   }
   uint64_t GetLastOSN(TsScanStats* ts_scan_stats = nullptr) const {
     if (start_row_ + nrow_ == block_->GetRowNum()) {
-      return block_->GetLastOSN();
+      uint64_t osn = block_->GetLastOSN();
+      return osn != 0 ? osn : block_->GetOSN(start_row_ + nrow_ - 1);
     } else {
-      return *block_->GetOSNAddr(start_row_ + nrow_ - 1, ts_scan_stats);
+      return block_->GetOSN(start_row_ + nrow_ - 1);
     }
   }
   const uint64_t* GetOSNAddr(int row_idx, TsScanStats* ts_scan_stats = nullptr) const {

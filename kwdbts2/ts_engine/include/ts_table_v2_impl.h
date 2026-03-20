@@ -44,9 +44,6 @@ class TsTableV2Impl : public TsTable {
     return table_schema_mgr_->GetCurrentVersion();
   }
 
-  void SetDropped() override;
-  bool IsDropped() override;
-
   std::shared_ptr<TsTableSchemaManager> GetSchemaManager() {
     return table_schema_mgr_;
   }
@@ -237,6 +234,14 @@ class TsTableV2Impl : public TsTable {
    */
   KStatus DeleteData(kwdbContext_p ctx, uint64_t range_group_id, std::string& primary_tag,
                   const std::vector<KwTsSpan>& ts_spans, uint64_t* count, uint64_t mtr_id, uint64_t osn) override;
+
+  KStatus DeleteEntityByTag(kwdbContext_p ctx, const std::vector<uint32_t/*index_id*/> &tags_index_id,
+                          std::vector<std::string> tags, uint64_t* count, uint64_t mtr_id, uint64_t osn,
+                          uint32_t cur_table_version, const HashIdSpan& hash_span);
+
+  KStatus DeleteMetricByTag(kwdbContext_p ctx, const std::vector<uint32_t/*index_id*/> &tags_index_id,
+                            std::vector<std::string> tags, const std::vector<KwTsSpan>& ts_spans, uint64_t* count,
+                            uint64_t mtr_id, uint64_t osn, uint32_t cur_table_version, const HashIdSpan& hash_span);
 
   KStatus CountRangeData(kwdbContext_p ctx, uint64_t range_group_id, HashIdSpan& hash_span,
                           const std::vector<KwTsSpan>& ts_spans, uint64_t* count,
