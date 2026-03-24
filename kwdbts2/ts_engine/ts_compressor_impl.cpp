@@ -1318,14 +1318,17 @@ bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, 
 }
 
 bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, GenCompAlg alg, int level) const {
-  assert(sizeof(alg) == sizeof(uint16_t));
+  static_assert(sizeof(alg) == sizeof(uint16_t));
   output->clear();
   PutFixed16(output, static_cast<uint16_t>(alg));
-  auto it = general_compressor_.find(alg);
-  if (it == general_compressor_.end()) {
-    // no compression
+  if (alg == GenCompAlg::kPlain) {
     output->append(input.data, input.len);
     return true;
+  }
+  auto it = general_compressor_.find(alg);
+  if (it == general_compressor_.end()) {
+    LOG_ERROR("Invalid general compression algorithm: %d", static_cast<int>(alg));
+    return false;
   }
   TsBufferBuilder tmp;
   bool ok = it->second->Compress(input, &tmp, level);

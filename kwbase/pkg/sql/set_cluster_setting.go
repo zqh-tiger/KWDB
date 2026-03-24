@@ -242,8 +242,8 @@ func checkTsCompressLevel(encodedValue string) error {
 
 func checkTsCompressAlgorithm(encodedValue string) error {
 	value := strings.ToLower(encodedValue)
-	if value != "lz4" && value != "zstd" && value != "zlib" && value != "snappy" {
-		return errors.New("Invalid algorithm, allowed: lz4 | zlib | zstd | snappy")
+	if value != "lz4" && value != "zstd" && value != "zlib" && value != "snappy" && value != "disabled" {
+		return errors.New("Invalid algorithm, allowed: lz4 | zlib | zstd | snappy | disabled")
 	}
 	return nil
 }
