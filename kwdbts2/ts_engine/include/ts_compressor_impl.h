@@ -44,7 +44,7 @@ class TsCompressorBase {
 class GenCompressorBase {
  public:
   virtual ~GenCompressorBase() = default;
-  virtual bool Compress(TSSlice raw, TsBufferBuilder *out, uint8_t level) const = 0;
+  virtual bool Compress(TSSlice raw, TsBufferBuilder *out, int level) const = 0;
   virtual bool Decompress(TSSlice raw, TsSliceGuard *out) const = 0;
 };
 
@@ -56,7 +56,7 @@ class CompressorImpl {
   virtual ~CompressorImpl() = default;
   CompressorImpl(const CompressorImpl &) = delete;
   void operator=(const CompressorImpl &) = delete;
-  virtual bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level = 1) const = 0;
+  virtual bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level = 1) const = 0;
   virtual bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const = 0;
   virtual size_t GetUncompressedSize(TSSlice data, uint64_t count) const = 0;
 };
@@ -71,7 +71,7 @@ class GorillaInt : public CompressorImpl {
     return inst;
   }
   static constexpr int stride = 8;
-  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const override;
+  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const override;
   bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override;
   size_t GetUncompressedSize(TSSlice data, uint64_t count) const override { return stride * count; }
 };
@@ -87,7 +87,7 @@ class GorillaIntV2 : public CompressorImpl {
     return inst;
   }
   static constexpr int stride = sizeof(T);
-  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const override;
+  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const override;
   bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override;
   size_t GetUncompressedSize(TSSlice data, uint64_t count) const override { return stride * count; }
 };
@@ -103,7 +103,7 @@ class Simple8BInt : public CompressorImpl {
     return inst;
   }
   static constexpr int stride = sizeof(T);
-  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const override;
+  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const override;
   bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override;
   size_t GetUncompressedSize(TSSlice data, uint64_t count) const override { return stride * count; }
 };
@@ -119,7 +119,7 @@ class Simple8BIntV2 : public CompressorImpl {
     return inst;
   }
   static constexpr int stride = sizeof(T);
-  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const override;
+  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const override;
   bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override;
   size_t GetUncompressedSize(TSSlice data, uint64_t count) const override { return stride * count; }
 };
@@ -134,7 +134,7 @@ class BitPacking : public CompressorImpl {
     return inst;
   }
   static constexpr int stride = 1;
-  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const override;
+  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const override;
   bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override;
   size_t GetUncompressedSize(TSSlice data, uint64_t count) const override { return stride * count; }
 };
@@ -154,7 +154,7 @@ class Chimp : public CompressorImpl {
     return inst;
   }
   static constexpr int stride = sizeof(T);
-  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const override;
+  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const override;
   bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override;
   size_t GetUncompressedSize(TSSlice data, uint64_t count) const override { return stride * count; }
 };
@@ -176,7 +176,7 @@ class SnappyString : public CompressorImpl {
     static SnappyString inst;
     return inst;
   }
-  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const override;
+  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const override;
   bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override;
   size_t GetUncompressedSize(TSSlice data, uint64_t count) const override;
 };
@@ -192,7 +192,7 @@ class LZ4String : public CompressorImpl {
     return inst;
   }
 
-  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const override;
+  bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const override;
   bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override;
   size_t GetUncompressedSize(TSSlice data, uint64_t count) const override;
 };
@@ -208,7 +208,7 @@ class ZSTDString : public CompressorImpl {
     return inst;
   }
 
-    bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const override;
+    bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const override;
     bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override;
     size_t GetUncompressedSize(TSSlice data, uint64_t count) const override;
 };
@@ -224,7 +224,7 @@ class ZLIBString : public CompressorImpl {
     return inst;
   }
 
-    bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, uint8_t level) const override;
+    bool Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const override;
     bool Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const override;
     size_t GetUncompressedSize(TSSlice data, uint64_t count) const override;
 };
@@ -300,7 +300,7 @@ class ConcreateGenCompressor : public GenCompressorBase {
     static ConcreateGenCompressor inst;
     return inst;
   }
-  bool Compress(TSSlice raw, TsBufferBuilder *out, uint8_t level) const override {
+  bool Compress(TSSlice raw, TsBufferBuilder *out, int level) const override {
     const CompressorImpl &comp = Compressor::GetInstance();
     return comp.Compress(raw, 0, out, level);
   }

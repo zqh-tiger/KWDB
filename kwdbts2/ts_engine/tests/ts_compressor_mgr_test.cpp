@@ -61,7 +61,6 @@ using AllDataTypes = ::testing::Types<int64_t, int32_t, double, float>;
 TYPED_TEST_CASE(CompressorManagerTester, AllDataTypes);
 TYPED_TEST(CompressorManagerTester, TwoLevelCompress) {
   const auto& inst = kwdbts::CompressorManager::GetInstance();
-  auto comp = inst.GetCompressor(GetCompressorAlg<TypeParam>::Alg, kwdbts::GenCompAlg::kSnappy);
   auto sz = sizeof(TypeParam);
 
   Generator<TypeParam> gen;
@@ -72,8 +71,9 @@ TYPED_TEST(CompressorManagerTester, TwoLevelCompress) {
   }
   kwdbts::TsBufferBuilder out;
   kwdbts::TsSliceGuard raw;
-  ASSERT_TRUE(comp.Compress({reinterpret_cast<char*>(vec.data()), vec.size() * sz}, nullptr, vec.size(), &out, 1));
-  ASSERT_TRUE(comp.Decompress({out.data(), out.size()}, nullptr, vec.size(), &raw));
+  ASSERT_TRUE(inst.CompressData({reinterpret_cast<char*>(vec.data()), vec.size() * sz}, nullptr, vec.size(), &out,
+                                GetCompressorAlg<TypeParam>::Alg, kwdbts::GenCompAlg::kSnappy, 1));
+  ASSERT_TRUE(inst.DecompressData(out.GetBuffer(), nullptr, vec.size(), &raw));
   ASSERT_EQ(raw.size(), vec.size() * sz);
   EXPECT_EQ(std::memcmp(vec.data(), raw.data(), raw.size()), 0);
 
@@ -81,8 +81,10 @@ TYPED_TEST(CompressorManagerTester, TwoLevelCompress) {
   for (int i = 0; i < count; ++i) {
     bitmap[i] = i % 7 ? kwdbts::kValid : kwdbts::kNull;
   }
-  ASSERT_TRUE(comp.Compress({reinterpret_cast<char*>(vec.data()), vec.size() * sz}, &bitmap, vec.size(), &out, 1));
-  ASSERT_TRUE(comp.Decompress({out.data(), out.size()}, &bitmap, vec.size(), &raw));
+  out.clear();
+  inst.CompressData({reinterpret_cast<char*>(vec.data()), vec.size() * sz}, &bitmap, vec.size(), &out,
+                    GetCompressorAlg<TypeParam>::Alg, kwdbts::GenCompAlg::kSnappy, 1);
+  ASSERT_TRUE(inst.DecompressData(out.GetBuffer(), &bitmap, vec.size(), &raw));
   ASSERT_EQ(raw.size(), vec.size() * sz);
   const TypeParam* pdata = reinterpret_cast<TypeParam*>(raw.data());
   for (int i = 0; i < count; ++i) {

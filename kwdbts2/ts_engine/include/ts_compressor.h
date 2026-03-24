@@ -49,6 +49,11 @@ class CompressorManager {
     TsCompAlg first_algo_;
     GenCompAlg second_algo_;
 
+    void EncodeAlgorithm(TsBufferBuilder* out, TsCompAlg first, GenCompAlg second) const {
+      PutFixed16(out, static_cast<uint16_t>(first));
+      PutFixed16(out, static_cast<uint16_t>(second));
+    }
+
    public:
     TwoLevelCompressor(const TsCompressorBase* first, const GenCompressorBase* second,
                        TsCompAlg first_algo, GenCompAlg second_algo)
@@ -56,7 +61,7 @@ class CompressorManager {
       first_algo_ = first == nullptr ? TsCompAlg::kPlain : first_algo;
       second_algo_ = second == nullptr ? GenCompAlg::kPlain : second_algo;
     }
-    bool Compress(TSSlice raw, const TsBitmapBase* bitmap, uint32_t count, TsBufferBuilder* out, uint8_t level) const;
+    void Compress(TSSlice raw, const TsBitmapBase* bitmap, uint32_t count, TsBufferBuilder* out, int level) const;
 
     bool Decompress(TSSlice raw, const TsBitmapBase* bitmap, uint32_t count, TsSliceGuard* out) const;
     bool IsPlain() const { return (first_ == nullptr && second_ == nullptr); }
@@ -69,11 +74,11 @@ class CompressorManager {
   // Regardless of how EngineOptions::compress_stage is set, default_algs_ maintains the encoding and compression
   // algorithms corresponding to different data types.
   std::unordered_map<DATATYPE, std::tuple<TsCompAlg, GenCompAlg>> default_algs_;
-  std::unordered_map<GenCompAlg, std::array<uint8_t, 4>> algs_level_;
+  std::unordered_map<GenCompAlg, std::array<int, 4>> algs_level_;
 
   CompressorManager();
 
-  bool DoDecompressData(uint32_t alg, TsSliceGuard&& input, const TsBitmapBase* bitmap, uint64_t count,
+  bool DoDecompressData(TsSliceGuard&& input, const TsBitmapBase* bitmap, uint64_t count,
                         TsSliceGuard* out) const;
   bool DoDecompressVarchar(GenCompAlg alg, TsSliceGuard&& input, TsSliceGuard* out) const;
 
@@ -91,25 +96,25 @@ class CompressorManager {
   TwoLevelCompressor GetDefaultCompressor(DATATYPE dtype) const;
 
   bool CompressData(TSSlice input, const TsBitmapBase* bitmap, uint64_t count, TsBufferBuilder* output,
-                    TsCompAlg first, GenCompAlg second, uint8_t level) const;
-  bool CompressVarchar(TSSlice input, TsBufferBuilder* output, GenCompAlg alg, uint8_t level) const;
+                    TsCompAlg first, GenCompAlg second, int level) const;
+  bool CompressVarchar(TSSlice input, TsBufferBuilder* output, GenCompAlg alg, int level) const;
   bool DecompressData(TsSliceGuard&& input, const TsBitmapBase* bitmap, uint64_t count, TsSliceGuard* out) const {
     if (input.size() < 4) {
-      LOG_ERROR("Invalid input length, too short");
+      LOG_ERROR("Invalid input length %lu, too short", input.size());
       return false;
     }
-    uint32_t v;
-    GetFixed32(&input, &v);
+    auto v = DecodeFixed32(input.data());
     if (v == 0) {
+      input.RemovePrefix(sizeof(uint32_t));
       *out = std::move(input);
       return true;
     }
 
-    return DoDecompressData(v, std::move(input), bitmap, count, out);
+    return DoDecompressData(std::move(input), bitmap, count, out);
   }
   bool DecompressVarchar(TsSliceGuard&& input, TsSliceGuard* out) const {
     if (input.size() < 2) {
-      LOG_ERROR("Invalid input length, too short");
+      LOG_ERROR("Invalid input length %lu, too short", input.size());
       return false;
     }
     uint16_t v;
