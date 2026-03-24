@@ -225,7 +225,7 @@ func checkTsCompressStage(encodedValue string) error {
 	if err != nil {
 		return err
 	}
-	if value != 0 && value != 1 && value != 2 {
+	if value < 0 || value > 3 {
 		return errors.New("invalid value, allowed values are 0, 1, or 2")
 	}
 	return nil

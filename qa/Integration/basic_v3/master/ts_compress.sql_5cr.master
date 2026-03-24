@@ -5,7 +5,7 @@ SET CLUSTER SETTING
 > set cluster setting ts.compress.stage = 2;
 SET CLUSTER SETTING
 > set cluster setting ts.compress.stage = 3;
-ERROR: invalid value, allowed values are 0, 1, or 2
+SET CLUSTER SETTING
 > set cluster setting ts.compress.stage = 4;
 ERROR: invalid value, allowed values are 0, 1, or 2
 > set cluster setting ts.compress.level = 'low';
