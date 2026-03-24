@@ -18,6 +18,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #include <algorithm>
@@ -163,6 +164,29 @@ enum class GenCompAlg : uint16_t {
 enum SortOrder {
   ASC = 0,
   DESC,
+};
+
+enum FillType {
+  NONE = 0,
+  EXACT,
+  PREVIOUS,
+  NEXT,
+  CLOSER,
+  LINEAR,
+  CONSTANT,
+};
+
+struct FillParams {
+  FillType fill_type = FillType::NONE;
+  timestamp64 before_range = 0;
+  timestamp64 after_range = 0;
+  DATATYPE const_data_type = DATATYPE::NO_TYPE;
+  string const_data_value = "";
+  uint32_t const_data_length = 0;
+  uint32_t const_n_data_length = 0;
+  std::unordered_set<uint32_t> varbytes_col_ids;
+  k_int64 const_int_value = 0;
+  bool int_value_flag = false;
 };
 
 enum TsDataSource {
@@ -637,6 +661,105 @@ inline int cmp(void* l, void* r, int32_t type, int32_t size) {
     case DATATYPE::STRING: {
       k_int32 ret = strncmp(static_cast<char*>(l), static_cast<char*>(r), size);
       return ret;
+    }
+      break;
+    default:
+      break;
+  }
+  return false;
+}
+
+inline int cmpWithSpan(void* s, void* e, void* m, int32_t type, int32_t size) {
+  switch (type) {
+    case DATATYPE::INT8:
+    case DATATYPE::BYTE:
+    case DATATYPE::CHAR:
+    case DATATYPE::BOOL:
+    case DATATYPE::BINARY: {
+      k_int32 ret = memcmp(s, m, size);
+      if (ret < 0) {
+        auto ret_1 = memcmp(m, e, size);
+        if (ret_1 <= 0) {
+          return 0;
+        }
+        return 1;
+      }
+      return ret == 0 ? 0 : -1;
+    }
+    case DATATYPE::INT16: {
+      k_int16 ls = *(static_cast<k_int16*>(s));
+      k_int16 le = *(static_cast<k_int16*>(e));
+      k_int16 mm = *(static_cast<k_int16*>(m));
+      if (ls < mm) {
+        if (mm <= le) {
+          return 0;
+        }
+        return 1;
+      }
+      return ls == mm ? 0 : -1;
+    }
+    case DATATYPE::INT32:
+    case DATATYPE::TIMESTAMP: {
+      k_int32 ls = *(static_cast<k_int32*>(s));
+      k_int32 le = *(static_cast<k_int32*>(e));
+      k_int32 mm = *(static_cast<k_int32*>(m));
+      if (ls < mm) {
+        if (mm <= le) {
+          return 0;
+        }
+        return 1;
+      }
+      return ls == mm ? 0 : -1;
+    }
+    case DATATYPE::INT64:
+    case DATATYPE::TIMESTAMP64:
+    case DATATYPE::TIMESTAMP64_MICRO:
+    case DATATYPE::TIMESTAMP64_NANO: {
+      k_int64 ls = *(static_cast<k_int64*>(s));
+      k_int64 le = *(static_cast<k_int64*>(e));
+      k_int64 mm = *(static_cast<k_int64*>(m));
+      if (ls < mm) {
+        if (mm <= le) {
+          return 0;
+        }
+        return 1;
+      }
+      return ls == mm ? 0 : -1;
+    }
+    case DATATYPE::FLOAT: {
+      float ls = *(static_cast<float*>(s));
+      float le = *(static_cast<float*>(e));
+      float mm = *(static_cast<float*>(m));
+      if (ls < mm) {
+        if (mm <= le) {
+          return 0;
+        }
+        return 1;
+      }
+      return ls == mm ? 0 : -1;
+    }
+    case DATATYPE::DOUBLE: {
+      double ls = *(static_cast<double*>(s));
+      double le = *(static_cast<double*>(e));
+      double mm = *(static_cast<double*>(m));
+      if (ls < mm) {
+        if (mm <= le) {
+          return 0;
+        }
+        return 1;
+      }
+      return ls == mm ? 0 : -1;
+    }
+    case DATATYPE::STRING: {
+      k_int32 ret = strncmp(static_cast<char*>(s), static_cast<char*>(m), size);
+      if (ret < 0) {
+        auto ret_1 = strncmp(static_cast<char*>(m), static_cast<char*>(e), size);
+        if (ret_1 <= 0) {
+          return 0;
+        }
+        return 1;
+      }
+      return ret == 0 ? 0 : -1;
     }
       break;
     default:
@@ -1262,6 +1385,19 @@ inline timestamp64 convertMSToPrecisionTS(timestamp64 ts, DATATYPE ts_type) {
   return ts > 0 ? INT64_MAX : INT64_MIN;
 }
 
+inline timestamp64 convertNanoToPrecisionTS(timestamp64 ts, DATATYPE ts_type) {
+  switch (ts_type) {
+  case TIMESTAMP64:
+    return ts / 1000000LL;
+  case TIMESTAMP64_MICRO:
+    return ts / 1000LL;
+  case TIMESTAMP64_NANO:
+    return ts;
+  default:
+    assert(false);
+  }
+}
+
 inline uint32_t GetConsistentHashId(const char* data, size_t length, uint64_t hash_num) {
   const uint32_t offset_basis = 2166136261;  // 32 bit offset basis
   const uint32_t prime = 16777619;
@@ -1364,6 +1500,8 @@ struct IteratorParams {
   bool sorted;
   k_uint32 offset;
   k_uint32 limit;
+  TS_OSN scan_osn;
+  FillParams fill_params;
 };
 
 inline bool InHashIdSpan(uint32_t hp, const std::vector<HashIdSpan>* hps) {

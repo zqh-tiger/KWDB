@@ -374,6 +374,9 @@ func (u *sqlSymUnion) tblExprs() tree.TableExprs {
 func (u *sqlSymUnion) from() tree.From {
     return u.val.(tree.From)
 }
+func (u *sqlSymUnion) fill() tree.Fill {
+    return u.val.(tree.Fill)
+}
 func (u *sqlSymUnion) int32s() []int32 {
     return u.val.([]int32)
 }
@@ -712,7 +715,7 @@ func (u *sqlSymUnion) triggerBody() tree.TriggerBody {
 %token <str> CHARACTER CHARACTERISTICS CHECK
 %token <str> CLOB CLUSTER COALESCE COLLATE COLLATION COLUMN COLUMNS COMMENT COMMIT
 %token <str> COMMITTED COMPACT COMPLETE COMPRESS CONCAT CONCURRENTLY CONFIG CONFIGS CONFIGURATION CONFIGURATIONS CONFIGURE
-%token <str> CONFLICT CONSTRAINT CONSTRAINTS CONTAINS CONVERSION COPY COVERING CREATE CREATEROLE CREATE_TIME
+%token <str> CONFLICT CONSTANT CONSTRAINT CONSTRAINTS CONTAINS CONVERSION COPY COVERING CREATE CREATEROLE CREATE_TIME
 %token <str> CROSS CUBE CURRENT CURRENT_CATALOG CURRENT_DATE CURRENT_SCHEMA
 %token <str> CURRENT_ROLE CURRENT_TIME CURRENT_TIMESTAMP
 %token <str> CURRENT_USER CYCLE COLLECT_SORTED_HISTOGRAM
@@ -723,18 +726,18 @@ func (u *sqlSymUnion) triggerBody() tree.TriggerBody {
 
 %token <str> EACH ELSIF ENCODE ENDIF ENDWHILE ENDCASE ENDLOOP ENDHANDLER
 %token <str> ELSE ENCODING END ENDPOINT ENDTIME ENUM ESCAPE ESTIMATED EXCEPT EXCLUDE ENABLE
-%token <str> EXISTS EXECUTE EXPERIMENTAL
+%token <str> EXACT EXISTS EXECUTE EXPERIMENTAL
 %token <str> EXPERIMENTAL_FINGERPRINTS EXPERIMENTAL_REPLICA
 %token <str> EXPERIMENTAL_AUDIT
 %token <str> EXPIRATION EXPLAIN EXPORT EXTENSION EXTRACT EXTRACT_DURATION
 
 %token <str> FALSE FAMILY FETCH FETCHVAL FETCHTEXT FETCHVAL_PATH FETCHTEXT_PATH FAIL
-%token <str> FILTERPARAM FILTERTYPE FILES FILTER
+%token <str> FILL FILTERPARAM FILTERTYPE FILES FILTER
 %token <str> FIRST FIRSTTS FIRST_ROW FIRST_ROW_TS FLOAT FLOAT4 FLOAT8 FLOORDIV FOLLOWS FOLLOWING FOR FORCE_INDEX FOREIGN FROM FULL FUNCTION FUNCTIONS
 
 %token <str> GB GEOMETRY GLOBAL GRANT GRANTS GREATEST GROUP GROUPING GROUPS
 
-%token <str> HANDLER EXIT CONTINUE FOUND SQLEXCEPTION CURSOR CLOSE OPEN
+%token <str> HANDLER EXIT CONTINUE FOUND SQLEXCEPTION CURSOR CLOSE CLOSER OPEN
 %token <str> H HAVING HASH HASHPOINT HIGH HISTOGRAM HOUR SORT_HISTOGRAM
 
 %token <str> IF IFERROR IFNULL IGNORE_FOREIGN_KEYS ILIKE IMMEDIATE IMPORT IN INCLUDE INCREMENT INCREMENTAL
@@ -762,7 +765,7 @@ func (u *sqlSymUnion) triggerBody() tree.TriggerBody {
 %token <str> ORDER ORDINALITY OTHERS OUT INOUT OUTER OVER OVERLAPS OVERLAY OWNED OPERATOR
 
 %token <str> PARENT PARTIAL PARTITION PARTITIONS PASSWORD PAUSE PHYSICAL PLACING
-%token <str> PLAN PLANS POSITION PRECEDES PRECEDING PRECISION PREPARE PRESERVE PRIMARY PRIORITY
+%token <str> PLAN PLANS POSITION PRECEDES PRECEDING PRECISION PREPARE PRESERVE PREVIOUS PRIMARY PRIORITY
 %token <str> PROCEDURAL PUBLIC PUBLICATION PROCEDURE PROCEDURES
 
 %token <str> QUERIES QUERY
@@ -1060,7 +1063,7 @@ func (u *sqlSymUnion) triggerBody() tree.TriggerBody {
 %type <[]tree.StorageParam> storage_parameter_list opt_table_with
 
 %type <*tree.Select> select_no_parens
-%type <tree.SelectStatement> select_clause select_with_parens simple_select values_clause table_clause simple_select_clause
+%type <tree.SelectStatement> select_clause select_with_parens simple_select values_clause table_clause simple_select_clause fill_select_clause
 %type <tree.SelectInto> simple_select_into_clause
 %type <tree.LockingClause> for_locking_clause opt_for_locking_clause for_locking_items
 %type <*tree.LockingItem> for_locking_item
@@ -1216,6 +1219,7 @@ func (u *sqlSymUnion) triggerBody() tree.TriggerBody {
 %type <tree.FuncArgDef> arg_def
 %type <tree.TableDef> table_elem
 %type <tree.Expr> where_clause opt_where_clause
+%type <tree.Fill> fill_clause
 %type <*tree.ArraySubscript> array_subscript
 %type <tree.Expr> opt_slice_bound
 %type <*tree.IndexFlags> opt_index_flags
@@ -8868,6 +8872,10 @@ select_no_parens:
   {
     $$.val = &tree.Select{Select: $1.selectStmt()}
   }
+| fill_select_clause opt_sort_clause
+  {
+	 $$.val = &tree.Select{Select: $1.selectStmt(), OrderBy: $2.orderBy()}
+  }
 | select_clause sort_clause
   {
     $$.val = &tree.Select{Select: $1.selectStmt(), OrderBy: $2.orderBy()}
@@ -8984,6 +8992,17 @@ simple_select:
 | table_clause         // EXTEND WITH HELP: TABLE
 | set_operation
 
+fill_select_clause:
+  SELECT select_hint_set opt_all_clause target_list
+     from_clause where_clause fill_clause
+    {
+      $$.val = &tree.SelectClause{
+        Exprs:      $4.selExprs(),
+        From:       $5.from(),
+        Where:      tree.NewWhere(tree.AstWhere, $6.expr()),
+        Fill:       $7.fill(),
+      }
+    }
 // %Help: SELECT - retrieve rows from a data source and compute a result
 // %Category: DML
 // %Text:
@@ -10342,6 +10361,150 @@ opt_where_clause:
     $$.val = tree.Expr(nil)
   }
 
+fill_clause:
+  FILL '(' EXACT ')'
+  {
+    $$.val = tree.Fill {
+      FillType: tree.ExactFill,
+    }
+  }
+| FILL '(' PREVIOUS ')'
+  {
+    $$.val = tree.Fill {
+      FillType: tree.PreviousFill,
+    }
+  }
+| FILL '(' PREVIOUS ',' signed_iconst ')'
+  {
+    nv := $5.numVal()
+		before, err := nv.AsInt64()
+		if err != nil {
+			return setErr(sqllex, err)
+		}
+		if before < 0 {
+			sqllex.Error("before range must be greater than or equal to 0")
+			return 1
+		}
+		fillRange := tree.FillRange {
+			BeforeRange: before,
+		}
+    $$.val = tree.Fill {
+      FillType: tree.PreviousFill,
+      FillRange: &fillRange,
+    }
+  }
+| FILL '(' NEXT ')'
+	{
+		$$.val = tree.Fill {
+			FillType: tree.NextFill,
+		}
+	}
+| FILL '(' NEXT ',' signed_iconst ')'
+	{
+		nv := $5.numVal()
+		end, err := nv.AsInt64()
+		if err != nil {
+			return setErr(sqllex, err)
+		}
+		if end < 0 {
+			sqllex.Error("end range must be greater than or equal to 0")
+			return 1
+		}
+		fillRange := tree.FillRange {
+			AfterRange: end,
+		}
+		$$.val = tree.Fill {
+			FillType: tree.NextFill,
+			FillRange: &fillRange,
+		}
+	}
+| FILL '(' CLOSER ')'
+	{
+		$$.val = tree.Fill {
+			FillType: tree.CloserFill,
+		}
+	}
+| FILL '(' CLOSER ',' signed_iconst ')'
+	{
+		nv := $5.numVal()
+		r, err := nv.AsInt64()
+		if err != nil {
+			return setErr(sqllex, err)
+		}
+		if r < 0 {
+			sqllex.Error("r range must be greater than or equal to 0")
+			return 1
+		}
+		fillRange := tree.FillRange {
+			BeforeRange: r,
+			AfterRange: r,
+		}
+		$$.val = tree.Fill {
+			FillType: tree.CloserFill,
+			FillRange: &fillRange,
+		}
+	}
+| FILL '(' LINEAR ')'
+	{
+		$$.val = tree.Fill {
+			FillType: tree.LinearFill,
+		}
+	}
+| FILL '(' LINEAR ',' signed_iconst ')'
+	{
+		nv := $5.numVal()
+		before, err := nv.AsInt64()
+		if err != nil {
+			return setErr(sqllex, err)
+		}
+		if before < 0 {
+			sqllex.Error("before range must be greater than or equal to 0")
+			return 1
+		}
+		fillRange := tree.FillRange {
+			BeforeRange: before,
+		}
+		$$.val = tree.Fill {
+			FillType: tree.LinearFill,
+			FillRange: &fillRange,
+		}
+	}
+| FILL '(' LINEAR ',' signed_iconst ',' signed_iconst ')'
+	{
+		nv1 := $5.numVal()
+		before, err := nv1.AsInt64()
+		if err != nil {
+			return setErr(sqllex, err)
+		}
+		if before < 0 {
+			sqllex.Error("before range must be greater than or equal to 0")
+			return 1
+		}
+		nv2 := $7.numVal()
+		end, err := nv2.AsInt64()
+		if err != nil {
+			return setErr(sqllex, err)
+		}
+		if end < 0 {
+			sqllex.Error("end range must be greater than or equal to 0")
+			return 1
+		}
+		fillRange := tree.FillRange {
+			BeforeRange: before,
+			AfterRange: end,
+		}
+		$$.val = tree.Fill {
+			FillType: tree.LinearFill,
+			FillRange: &fillRange,
+		}
+	}
+| FILL '(' CONSTANT ',' b_expr')'
+  {
+    $$.val = tree.Fill {
+      FillType: tree.ConstantFill,
+      ConstValue: $5.expr(),
+    }
+  }
 
 // Type syntax
 //   SQL introduces a large amount of type-specific syntax.
@@ -13310,6 +13473,7 @@ unreserved_keyword:
 | CHANGEFEED
 | CLOB
 | CLOSE
+| CLOSER
 | CLUSTER
 | COLUMNS
 | COMMIT
@@ -13322,6 +13486,7 @@ unreserved_keyword:
 | CONFIGURATION
 | CONFIGURATIONS
 | CONFIGURE
+| CONSTANT
 | CONSTRAINTS
 | CONVERSION
 | COPY
@@ -13359,6 +13524,7 @@ unreserved_keyword:
 | ENUM
 | ESCAPE
 | ESTIMATED
+| EXACT
 | EXCLUDE
 | EXECUTE
 | EXPERIMENTAL
@@ -13497,6 +13663,7 @@ unreserved_keyword:
 | PRECEDING
 | PREPARE
 | PRESERVE
+| PREVIOUS
 | PRIORITY
 | PROCEDURE
 | PROCEDURES
@@ -13804,6 +13971,7 @@ reserved_keyword:
 | EXCEPT
 | FALSE
 | FETCH
+| FILL
 | FOR
 | FOREIGN
 | FROM

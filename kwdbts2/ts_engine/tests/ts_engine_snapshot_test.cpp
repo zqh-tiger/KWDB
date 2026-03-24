@@ -27,26 +27,29 @@ RangeGroup test_range{default_entitygroup_id_in_dist_v2, 0};
 
 class TestEngineSnapshotImgrate : public ::testing::Test {
  public:
-  kwdbContext_t context_;
-  kwdbContext_p ctx_;
+  kwdbContext_t context_{};
+  kwdbContext_p ctx_{&context_};
   EngineOptions opts_;
-  TSEngineImpl* ts_engine_src_;
-  TSEngineImpl* ts_engine_desc_;
+  TSEngineImpl* ts_engine_src_{nullptr};
+  TSEngineImpl* ts_engine_desc_{nullptr};
 
-  virtual void SetUp() override {
-    ctx_ = &context_;
-    InitKWDBContext(ctx_);
-    KWDBDynamicThreadPool::GetThreadPool().Init(8, ctx_);
+  static void SetUpTestCase() {
+    KWDBDynamicThreadPool::GetThreadPool().InitImplicitly();
   }
 
-  virtual void TearDown() override {
-    KWDBDynamicThreadPool::GetThreadPool().Stop();
+  static void TearDownTestCase() {
+    auto& pool = KWDBDynamicThreadPool::GetThreadPool();
+    if (!pool.IsStop()) {
+      pool.Stop();
+    }
+#ifdef WITH_TESTS
+    KWDBDynamicThreadPool::Destroy();
+#endif
   }
 
   TestEngineSnapshotImgrate() {
     auto ret = system(("rm -rf " + db_path + "/*").c_str());
     EXPECT_EQ(ret, 0);
-    ctx_ = &context_;
     InitServerKWDBContext(ctx_);
     opts_.db_path = db_path + "/srcdb/";
     // clear path files.
@@ -61,7 +64,6 @@ class TestEngineSnapshotImgrate : public ::testing::Test {
     opts_.db_path = db_path + "/descdb/";
     engine = new TSEngineImpl(opts_);
     s = engine->Init(ctx_);
-    MakeDirectory(opts_.db_path + "/temp_db_");
     if (s != KStatus::SUCCESS) {
       std::cout << "engine init failed." << std::endl;
       exit(1);
@@ -70,15 +72,9 @@ class TestEngineSnapshotImgrate : public ::testing::Test {
     g_go_start_service = false;
   }
 
-  ~TestEngineSnapshotImgrate() {
-    if (ts_engine_src_ != nullptr) {
-      delete ts_engine_src_;
-      ts_engine_src_ = nullptr;
-    }
-    if (ts_engine_desc_ != nullptr) {
-      delete ts_engine_desc_;
-      ts_engine_desc_ = nullptr;
-    }
+  ~TestEngineSnapshotImgrate() override {
+    delete ts_engine_src_;
+    delete ts_engine_desc_;
   }
   
   void InsertData(TSEngineImpl* ts_e, TSTableID table_id, TSEntityID dev_id, timestamp64 start_ts, int num, KTimestamp interval = 1000, TS_OSN osn = 10) {
@@ -126,7 +122,7 @@ class TestEngineSnapshotImgrate : public ::testing::Test {
 
   void CheckTagValue(std::vector<EntityResultIndex> &entity_id_list, ResultSet &rs, uint64_t count) {
     for (size_t i = 0; i < entity_id_list.size(); i++) {
-      uint64_t e_id = entity_id_list[i].entityId;
+      uint64_t e_id = *(uint64_t*)(entity_id_list[i].mem.get());
       std::string e_id_str = intToString(e_id);
       EXPECT_EQ(KUint64((char*)rs.data[0][0]->mem + 216 * i), e_id);
       EXPECT_TRUE(0 == memcmp(rs.data[1][0]->getData(i) + 2, e_id_str.data(), e_id_str.length()));
@@ -144,7 +140,7 @@ class TestEngineSnapshotImgrate : public ::testing::Test {
     uint64_t row_count = 0;
     std::vector<EntityResultIndex> devs{dev_id};
     ctx_->ts_engine = ts_e;
-    ts_table_v2->GetEntityRowCount(ctx_, devs, {ts_span}, &row_count);
+    ts_table_v2->GetEntityRowCount(ctx_, devs, {ts_span}, UINT64_MAX, &row_count);
     return row_count;
   }
   std::string GetPrimaryKey(TSEngineImpl* ts_e, TSTableID table_id, TSEntityID dev_id) {
@@ -201,11 +197,11 @@ TEST_F(TestEngineSnapshotImgrate, TestDataVolumeIntface) {
     for (size_t i = 1; i <= entity_num; i++) {
       InsertData(ts_engine_src_, cur_table_id, i, 12345 + 1000 * entity_rows * (i - 1), entity_rows);
       uint64_t row_num;
-      s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX},  &row_num);
+      s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &row_num);
       ASSERT_EQ(s, KStatus::SUCCESS);
       while (row_num == 0) {
         std::cout << "sdfsdf " << std::endl;
-        s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX},  &row_num);
+        s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &row_num);
         ASSERT_EQ(s, KStatus::SUCCESS);
       }
       ASSERT_EQ(row_num, i * entity_rows);
@@ -218,10 +214,10 @@ TEST_F(TestEngineSnapshotImgrate, TestDataVolumeIntface) {
       ASSERT_EQ(s, KStatus::SUCCESS);
       ASSERT_EQ(half_ts, 12345 + (1000 * entity_rows * i) / 2);
     }
-    s = ts_table->DeleteTotalRange(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, 1, 1);
+    s = ts_table->DeleteTotalRange(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, 1, UINT64_MAX);
     ASSERT_EQ(s, KStatus::SUCCESS);
     uint64_t row_num;
-    s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX},  &row_num);
+    s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &row_num);
     ASSERT_EQ(s, KStatus::SUCCESS);
     ASSERT_EQ(row_num, 0);
   }
@@ -239,7 +235,7 @@ TEST_F(TestEngineSnapshotImgrate, CreateSnapshotAndInsertOtherEmpty) {
 
   uint64_t snapshot_id;
   bool is_dropped = false;
-  s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &snapshot_id, is_dropped);
+  s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &snapshot_id, is_dropped);
   ASSERT_EQ(s, KStatus::SUCCESS);
 
   // create table 1008
@@ -292,11 +288,6 @@ TEST_F(TestEngineSnapshotImgrate, CreateSnapshotAndInsertOther) {
   ASSERT_EQ(s, KStatus::SUCCESS);
   ctx_->ts_engine = ts_engine_src_;
 
-  uint64_t snapshot_id;
-  bool is_dropped = false;
-  s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &snapshot_id, is_dropped);
-  ASSERT_EQ(s, KStatus::SUCCESS);
-
   // create table 1008
   s = ts_engine_desc_->CreateTsTable(ctx_, cur_table_id, &meta, ts_table);
   ASSERT_EQ(s, KStatus::SUCCESS);
@@ -312,6 +303,11 @@ TEST_F(TestEngineSnapshotImgrate, CreateSnapshotAndInsertOther) {
   ASSERT_EQ(1, entity_ids.size());
   auto row_count = GetDataNum(ts_engine_src_, cur_table_id, entity_ids[0], {INT64_MIN, INT64_MAX});
   ASSERT_EQ(row_count, 5);
+
+  uint64_t snapshot_id;
+  bool is_dropped = false;
+  s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &snapshot_id, is_dropped);
+  ASSERT_EQ(s, KStatus::SUCCESS);
 
   uint64_t desc_snapshot_id;
   s = ts_engine_desc_->CreateSnapshotForWrite(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &desc_snapshot_id, is_dropped, 100);
@@ -366,7 +362,7 @@ TEST_F(TestEngineSnapshotImgrate, CreateSnapshotAndInsertPartitions) {
 
   uint64_t snapshot_id;
   bool is_dropped = false;
-  s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &snapshot_id, is_dropped);
+  s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &snapshot_id, is_dropped);
   ASSERT_EQ(s, KStatus::SUCCESS);
 
   // create table 1008
@@ -474,7 +470,7 @@ TEST_F(TestEngineSnapshotImgrate, InsertPartitionsRollback) {
 
   uint64_t snapshot_id;
   bool is_dropped = false;
-  s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &snapshot_id, is_dropped);
+  s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &snapshot_id, is_dropped);
   ASSERT_EQ(s, KStatus::SUCCESS);
 
   uint64_t desc_snapshot_id;
@@ -506,7 +502,7 @@ TEST_F(TestEngineSnapshotImgrate, InsertPartitionsRollback) {
   uint32_t count;
   std::vector<HashIdSpan> hash_id_spans;
   hash_id_spans.push_back({2, 2});
-  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, &hash_id_spans, &iter);
+  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, UINT64_MAX, &hash_id_spans, &iter);
   ASSERT_EQ(s, KStatus::SUCCESS);
   s = iter->Next(&entity_id_list, &rs, &count);
   ASSERT_EQ(s, KStatus::SUCCESS);
@@ -515,14 +511,14 @@ TEST_F(TestEngineSnapshotImgrate, InsertPartitionsRollback) {
 
   s = ts_engine_src_->DeleteSnapshot(ctx_, snapshot_id);
   ASSERT_EQ(s, KStatus::SUCCESS);
-  s = ts_engine_desc_->WriteSnapshotRollback(ctx_, desc_snapshot_id, 0);
+  s = ts_engine_desc_->WriteSnapshotRollback(ctx_, desc_snapshot_id, UINT64_MAX);
   ASSERT_EQ(s, KStatus::SUCCESS);
   s = ts_engine_desc_->DeleteSnapshot(ctx_, desc_snapshot_id);
   ASSERT_EQ(s, KStatus::SUCCESS);
 
   entity_id_list.clear();
   rs.clear();
-  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, &hash_id_spans, &iter);
+  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, UINT64_MAX, &hash_id_spans, &iter);
   ASSERT_EQ(s, KStatus::SUCCESS);
   s = iter->Next(&entity_id_list, &rs, &count);
   ASSERT_EQ(s, KStatus::SUCCESS);
@@ -563,7 +559,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataDiffEntitiesFaild1) {
     InsertData(ts_engine_src_, cur_table_id, pkey_start + i, 12345 + i * 1000, 5);
   }
   uint64_t row_num;
-  s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX},  &row_num);
+  s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &row_num);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(row_num, 5 * entity_num);
   uint64_t del_count;
@@ -573,7 +569,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataDiffEntitiesFaild1) {
   pkeys.push_back(pkey_str);
   s = ts_table_v2->DeleteEntities(ctx_, pkeys, &del_count, 0, 1000, true);
   ASSERT_EQ(s, KStatus::SUCCESS);
-  s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX},  &row_num);
+  s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &row_num);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(row_num, (entity_num - 1) * 5);
   std::string pkey_2 = GetPrimaryKey(ts_engine_src_, cur_table_id, 2);
@@ -581,7 +577,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataDiffEntitiesFaild1) {
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(del_count, 5);
   std::vector<kwdbts::EntityResultIndex> entity_store;
-  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, entity_store);
+  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, UINT64_MAX, entity_store);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(entity_store.size(), 4);
 
@@ -595,7 +591,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataDiffEntitiesFaild1) {
   uint32_t count;
   std::vector<HashIdSpan> hash_id_spans;
   hash_id_spans.push_back({2, 2});
-  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols_t, osn_spans, &hash_id_spans, &iter);
+  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols_t, osn_spans, UINT64_MAX, &hash_id_spans, &iter);
   ASSERT_EQ(s, KStatus::SUCCESS);
   s = iter->Next(&entity_id_list, &rs, &count);
   ASSERT_EQ(s, KStatus::SUCCESS);
@@ -611,7 +607,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataDiffEntitiesFaild1) {
   s = ts_engine_desc_->CreateSnapshotForWrite(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &desc_snapshot_id, is_dropped, 100);
   ASSERT_EQ(s, KStatus::SUCCESS);
   uint64_t snapshot_id;
-  s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &snapshot_id, is_dropped);
+  s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &snapshot_id, is_dropped);
   ASSERT_EQ(s, KStatus::SUCCESS);
 
   // migrate data from 1007 to 1008
@@ -634,7 +630,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataDiffEntitiesFaild1) {
 
   entity_store.clear();
   ctx_->ts_engine = ts_engine_desc_;
-  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, entity_store);
+  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, UINT64_MAX, entity_store);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(entity_store.size(), 4);
 
@@ -642,7 +638,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataDiffEntitiesFaild1) {
   ctx_->ts_engine = ts_engine_src_;
   s = ts_engine_src_->GetTsTable(ctx_, cur_table_id, ts_table_src, is_dropped);
   EXPECT_EQ(s , KStatus::SUCCESS);
-  s = ts_table_src->DeleteTotalRange(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, 1, 111);
+  s = ts_table_src->DeleteTotalRange(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, 1, UINT64_MAX);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ts_table_v2 = dynamic_pointer_cast<TsTableV2Impl>(ts_table_src);
   std::vector<k_uint32> scan_cols = {0};
@@ -650,7 +646,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataDiffEntitiesFaild1) {
   osn_spans.push_back({0, UINT64_MAX});
  entity_id_list.clear();
   rs.clear();
-  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, &hash_id_spans, &iter);
+  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, UINT64_MAX, &hash_id_spans, &iter);
   ASSERT_EQ(s, KStatus::SUCCESS);
   s = iter->Next(&entity_id_list, &rs, &count);
   ASSERT_EQ(s, KStatus::SUCCESS);
@@ -664,7 +660,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataDiffEntitiesFaild1) {
   entity_id_list.clear();
   rs.clear();
   rs.setColumnNum(4);
-  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols_t, osn_spans, &hash_id_spans, &iter);
+  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols_t, osn_spans, UINT64_MAX, &hash_id_spans, &iter);
   ASSERT_EQ(s, KStatus::SUCCESS);
   s = iter->Next(&entity_id_list, &rs, &count);
   ASSERT_EQ(s, KStatus::SUCCESS);
@@ -767,11 +763,11 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataSameEntityDestNoEmpty) {
     InsertData(ts_engine_src_, cur_table_id, 1 + i, 12345 + i * 1000, 5);
   }
   uint64_t row_num;
-  s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX},  &row_num);
+  s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &row_num);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(row_num, 5 * entity_num);
   std::vector<kwdbts::EntityResultIndex> entity_store;
-  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, entity_store);
+  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, UINT64_MAX, entity_store);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(entity_store.size(), entity_num);
 
@@ -783,7 +779,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataSameEntityDestNoEmpty) {
   }
   uint64_t count;
   ctx_->ts_engine = ts_engine_desc_;
-  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &count);
+  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &count);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(count, entity_num * 5);
 
@@ -791,12 +787,12 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataSameEntityDestNoEmpty) {
   bool is_dropped = false;
   s = ts_engine_desc_->CreateSnapshotForWrite(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &desc_snapshot_id, is_dropped, 100);
   ASSERT_EQ(s, KStatus::SUCCESS);
-  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &count);
+  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &count);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(count, 0);
 
   uint64_t snapshot_id;
-  s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &snapshot_id, is_dropped);
+  s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &snapshot_id, is_dropped);
   ASSERT_EQ(s, KStatus::SUCCESS);
 
   // migrate data from 1007 to 1008
@@ -817,7 +813,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataSameEntityDestNoEmpty) {
   s = ts_engine_desc_->DeleteSnapshot(ctx_, desc_snapshot_id);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ctx_->ts_engine = ts_engine_desc_;
-  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &count);
+  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &count);
   ctx_->ts_engine = ts_engine_src_;
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(count, entity_num * 5);
@@ -836,7 +832,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataSameEntityDestNoEmpty) {
   uint32_t count1;
   std::vector<HashIdSpan> hash_id_spans;
   hash_id_spans.push_back({2, 2});
-  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, &hash_id_spans, &iter);
+  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, UINT64_MAX, &hash_id_spans, &iter);
   ASSERT_EQ(s, KStatus::SUCCESS);
   s = iter->Next(&entity_id_list, &rs, &count1);
   ASSERT_EQ(s, KStatus::SUCCESS);
@@ -860,7 +856,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataSameEntityDestNoEmpty) {
   count1 = 0;
   ResultSet res;
   res.setColumnNum(1);
-  s = ts_table_v2->GetEntityIdListByOSN(ctx_, pkeys, osn_spans, scan_cols, &hash_id_spans, &entity_id_list, &res, &count1, 1);
+  s = ts_table_v2->GetEntityIdListByOSN(ctx_, pkeys, osn_spans, UINT64_MAX, scan_cols, &hash_id_spans, &entity_id_list, &res, &count1, 1);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(entity_id_list.size(), entity_num);
   ASSERT_EQ(count1, entity_num);
@@ -886,11 +882,11 @@ TEST_F(TestEngineSnapshotImgrate, DestNoEmptyThreeTimes) {
     InsertData(ts_engine_src_, cur_table_id, 1 + i, 12345 + i * 1000, 5);
   }
   uint64_t row_num;
-  s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX},  &row_num);
+  s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &row_num);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(row_num, 5 * entity_num);
   std::vector<kwdbts::EntityResultIndex> entity_store;
-  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, entity_store);
+  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, UINT64_MAX, entity_store);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(entity_store.size(), entity_num);
 
@@ -902,7 +898,7 @@ TEST_F(TestEngineSnapshotImgrate, DestNoEmptyThreeTimes) {
   }
   uint64_t count;
   ctx_->ts_engine = ts_engine_desc_;
-  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &count);
+  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &count);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(count, entity_num * 5);
 
@@ -912,7 +908,7 @@ TEST_F(TestEngineSnapshotImgrate, DestNoEmptyThreeTimes) {
     s = ts_engine_desc_->CreateSnapshotForWrite(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &desc_snapshot_id, is_dropped, 100);
     ASSERT_EQ(s, KStatus::SUCCESS);
     uint64_t snapshot_id;
-    s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &snapshot_id, is_dropped);
+    s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &snapshot_id, is_dropped);
     ASSERT_EQ(s, KStatus::SUCCESS);
 
     // migrate data from 1007 to 1008
@@ -935,7 +931,7 @@ TEST_F(TestEngineSnapshotImgrate, DestNoEmptyThreeTimes) {
   }
   
   ctx_->ts_engine = ts_engine_desc_;
-  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &count);
+  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &count);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(count, entity_num * 5);
   
@@ -960,11 +956,11 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataSameEntityDestNoEmptyRollback) 
     InsertData(ts_engine_src_, cur_table_id, 1 + i, 12345 + i * 1000, 5);
   }
   uint64_t row_num;
-  s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX},  &row_num);
+  s = ts_table->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &row_num);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(row_num, 5 * entity_num);
   std::vector<kwdbts::EntityResultIndex> entity_store;
-  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, entity_store);
+  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, UINT64_MAX, entity_store);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(entity_store.size(), entity_num);
 
@@ -976,17 +972,17 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataSameEntityDestNoEmptyRollback) 
   }
   uint64_t count;
   ctx_->ts_engine = ts_engine_desc_;
-  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &count);
+  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &count);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(count, entity_num * 5);
 
   for (size_t i = 0; i < 3; i++) {
     uint64_t desc_snapshot_id;
     bool is_dropped = false;
-    s = ts_engine_desc_->CreateSnapshotForWrite(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &desc_snapshot_id, is_dropped, 100);
+    s = ts_engine_desc_->CreateSnapshotForWrite(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &desc_snapshot_id, is_dropped, UINT64_MAX);
     ASSERT_EQ(s, KStatus::SUCCESS);
     uint64_t snapshot_id;
-    s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &snapshot_id, is_dropped);
+    s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &snapshot_id, is_dropped);
     ASSERT_EQ(s, KStatus::SUCCESS);
 
     // migrate data from 1007 to 1008
@@ -1002,18 +998,18 @@ TEST_F(TestEngineSnapshotImgrate, ConvertManyDataSameEntityDestNoEmptyRollback) 
     } while (snapshot_data.len > 0);
     s = ts_engine_src_->DeleteSnapshot(ctx_, snapshot_id);
     ASSERT_EQ(s, KStatus::SUCCESS);
-    s = ts_engine_desc_->WriteSnapshotRollback(ctx_, desc_snapshot_id, 0);
+    s = ts_engine_desc_->WriteSnapshotRollback(ctx_, desc_snapshot_id, UINT64_MAX);
     ASSERT_EQ(s, KStatus::SUCCESS);
     s = ts_engine_desc_->DeleteSnapshot(ctx_, desc_snapshot_id);
     ASSERT_EQ(s, KStatus::SUCCESS);
   }
   
   ctx_->ts_engine = ts_engine_desc_;
-  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &count);
+  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetRangeRowCount(ctx_, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &count);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(count, 0);
   entity_store.clear();
-  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, entity_store);
+  s = dynamic_pointer_cast<TsTableV2Impl>(ts_table)->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, UINT64_MAX, entity_store);
   ctx_->ts_engine = ts_engine_src_;
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(entity_store.size(), 0);
@@ -1053,7 +1049,7 @@ TEST_F(TestEngineSnapshotImgrate, mulitSnapshot) {
       s = ts_engine_desc_->CreateSnapshotForWrite(ctx_, cur_table_id, 0, UINT64_MAX, ts_span, &desc_snapshot_id, is_dropped, 100);
       ASSERT_EQ(s, KStatus::SUCCESS);
       uint64_t snapshot_id;
-      s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, ts_span, &snapshot_id, is_dropped);
+      s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, ts_span, UINT64_MAX, &snapshot_id, is_dropped);
       ASSERT_EQ(s, KStatus::SUCCESS);
 
       // migrate data from 1007 to 1008
@@ -1102,14 +1098,14 @@ TEST_F(TestEngineSnapshotImgrate, ConvertUpdateEntities) {
   uint64_t del_count;
   auto ts_table_v2 = dynamic_pointer_cast<TsTableV2Impl>(ts_table);
   for (size_t i = 0; i < 3; i++) {
-    InsertData(ts_engine_src_, cur_table_id, pkey_int, 123456, 5, 10086 + i * 10);
+    InsertData(ts_engine_src_, cur_table_id, pkey_int, 123456, 5, 1000, 10086 + i * 10);
     UpdateTag(ts_engine_src_, cur_table_id, pkey_int, 10087 + i * 10);
     s = ts_table_v2->DeleteEntities(ctx_, pkeys, &del_count, 0, 10088 + i * 10, true);
     ASSERT_EQ(s, KStatus::SUCCESS);
     ASSERT_EQ(del_count, 5);
   }
 
-  InsertData(ts_engine_src_, cur_table_id, pkey_int, 123456, 5, 10186);
+  InsertData(ts_engine_src_, cur_table_id, pkey_int, 123456, 5, 1000, 10186);
   UpdateTag(ts_engine_src_, cur_table_id, pkey_int, 10187);
   s = ts_table_v2->DeleteData(ctx_, 1, pkeys[0], {{0, 123456}}, &del_count, 0, 10188);
   ASSERT_EQ(s, KStatus::SUCCESS);
@@ -1117,7 +1113,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertUpdateEntities) {
 
   UpdateTag(ts_engine_src_, cur_table_id, pkey_int, 10189);
   std::vector<kwdbts::EntityResultIndex> entity_store;
-  s = ts_table_v2->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, entity_store);
+  s = ts_table_v2->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, UINT64_MAX, entity_store);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(entity_store.size(), 1);
 
@@ -1129,7 +1125,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertUpdateEntities) {
   s = ts_engine_desc_->CreateSnapshotForWrite(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &desc_snapshot_id, is_dropped, 100);
   ASSERT_EQ(s, KStatus::SUCCESS);
   uint64_t snapshot_id;
-  s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, &snapshot_id, is_dropped);
+  s = ts_engine_src_->CreateSnapshotForRead(ctx_, cur_table_id, 0, UINT64_MAX, {INT64_MIN, INT64_MAX}, UINT64_MAX, &snapshot_id, is_dropped);
   ASSERT_EQ(s, KStatus::SUCCESS);
 
   // migrate data from 1007 to 1008
@@ -1153,7 +1149,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertUpdateEntities) {
   ts_table_v2 = dynamic_pointer_cast<TsTableV2Impl>(ts_table);
   entity_store.clear();
   ctx_->ts_engine = ts_engine_desc_;
-  s = ts_table_v2->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, entity_store);
+  s = ts_table_v2->GetEntityIdByHashSpan(ctx_, {0, UINT64_MAX}, UINT64_MAX, entity_store);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(entity_store.size(), 1);
 
@@ -1169,7 +1165,7 @@ TEST_F(TestEngineSnapshotImgrate, ConvertUpdateEntities) {
   uint32_t count;
   std::vector<HashIdSpan> hash_id_spans;
   hash_id_spans.push_back({2, 2});
-  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, &hash_id_spans, &iter);
+  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, UINT64_MAX, &hash_id_spans, &iter);
   ASSERT_EQ(s, KStatus::SUCCESS);
   s = iter->Next(&entity_id_list, &rs, &count);
   ASSERT_EQ(s, KStatus::SUCCESS);
@@ -1184,8 +1180,33 @@ TEST_F(TestEngineSnapshotImgrate, ConvertUpdateEntities) {
   ASSERT_EQ(op_osns[1]->type, OperatorTypeOfRecord::OP_TYPE_TAG_DELETE);
   ASSERT_EQ(op_osns[2]->osn, 10108);
   ASSERT_EQ(op_osns[2]->type, OperatorTypeOfRecord::OP_TYPE_TAG_DELETE);
-  ASSERT_EQ(op_osns[3]->osn, 0);
-  ASSERT_EQ(op_osns[3]->type, OperatorTypeOfRecord::OP_TYPE_TAG_EXISTED);
+  ASSERT_EQ(op_osns[3]->osn, 10187);
+  ASSERT_EQ(op_osns[3]->type, OperatorTypeOfRecord::OP_TYPE_TAG_UPDATE);
+  delete iter;
+
+  entity_id_list.clear();
+  rs.clear();
+  count = 0;
+  op_osns.clear();
+  s = ts_engine_desc_->GetTsTable(ctx_, cur_table_id, ts_table, is_dropped);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  ts_table_v2 = dynamic_pointer_cast<TsTableV2Impl>(ts_table);
+  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, UINT64_MAX, &hash_id_spans, &iter);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  s = iter->Next(&entity_id_list, &rs, &count);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  ASSERT_EQ(count, 4);
+  for (size_t i = 0; i < count; i++) {
+    op_osns.push_back(reinterpret_cast<OperatorInfoOfRecord*>(entity_id_list[i].op_with_osn.get()));
+  }
+  ASSERT_EQ(op_osns[0]->osn, 10088);
+  ASSERT_EQ(op_osns[0]->type, OperatorTypeOfRecord::OP_TYPE_TAG_DELETE);
+  ASSERT_EQ(op_osns[1]->osn, 10098);
+  ASSERT_EQ(op_osns[1]->type, OperatorTypeOfRecord::OP_TYPE_TAG_DELETE);
+  ASSERT_EQ(op_osns[2]->osn, 10108);
+  ASSERT_EQ(op_osns[2]->type, OperatorTypeOfRecord::OP_TYPE_TAG_DELETE);
+  ASSERT_EQ(op_osns[3]->osn, 10187);
+  ASSERT_EQ(op_osns[3]->type, OperatorTypeOfRecord::OP_TYPE_TAG_UPDATE);
   delete iter;
 
   kwdbts::TsIterator *m_iter;
@@ -1199,27 +1220,27 @@ TEST_F(TestEngineSnapshotImgrate, ConvertUpdateEntities) {
     ASSERT_EQ(s, KStatus::SUCCESS);
     total += count;
   } while (count > 0);
-  ASSERT_EQ(total,  7);  // delete 3 , metric data 4.
-  ASSERT_EQ(rs.data[0][3]->count, 4);
-  ASSERT_EQ(KUint64(rs.data[0][3]->mem), 124456);
-  ASSERT_EQ(KUint64((char*)(rs.data[0][3]->mem) + 24), 127456);
+  ASSERT_EQ(total,  8);  // delete 3, update 1, metric data 4.
+  ASSERT_EQ(rs.data[0][4]->count, 4);
+  ASSERT_EQ(KUint64(rs.data[0][4]->mem), 124456);
+  ASSERT_EQ(KUint64((char*)(rs.data[0][4]->mem) + 24), 127456);
   ASSERT_EQ(KUint64(rs.data[1][2]->mem), 10108);
-  ASSERT_EQ(KUint64(rs.data[1][3]->mem), 10);
-  ASSERT_EQ(KUint64((char*)(rs.data[1][3]->mem) + 24), 10);
+  ASSERT_EQ(KUint64(rs.data[1][4]->mem), 10186);
+  ASSERT_EQ(KUint64((char*)(rs.data[1][4]->mem) + 24), 10186);
   delete m_iter;
 
   osn_spans.clear();
   osn_spans.push_back({10187, 10188});
   entity_id_list.clear();
   rs.clear();
-  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, &hash_id_spans, &iter);
+  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, UINT64_MAX, &hash_id_spans, &iter);
   ASSERT_EQ(s, KStatus::SUCCESS);
   s = iter->Next(&entity_id_list, &rs, &count);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(count, 1);
   auto op_osn = reinterpret_cast<OperatorInfoOfRecord*>(entity_id_list[0].op_with_osn.get());
-  ASSERT_EQ(op_osn->osn, 0);
-  ASSERT_EQ(op_osn->type, OperatorTypeOfRecord::OP_TYPE_TAG_EXISTED);
+  ASSERT_EQ(op_osn->osn, 10187);
+  ASSERT_EQ(op_osn->type, OperatorTypeOfRecord::OP_TYPE_TAG_UPDATE);
   delete iter;
   iter = nullptr;
 
@@ -1232,19 +1253,23 @@ TEST_F(TestEngineSnapshotImgrate, ConvertUpdateEntities) {
     ASSERT_EQ(s, KStatus::SUCCESS);
     total += count;
   } while (count > 0);
-  ASSERT_EQ(total,  1);
+  ASSERT_EQ(total,  2);
   ASSERT_EQ(rs.data[1][0]->count, 1);
   ASSERT_EQ(KUint64(rs.data[1][0]->mem), 10188);
   ASSERT_EQ(KUint64(rs.data[2][0]->mem), OperatorTypeOfRecord::OP_TYPE_METRIC_DELETE);
   ASSERT_EQ(KUint64(rs.data[3][0]->mem), 0);
   ASSERT_EQ(KUint64((char*)(rs.data[3][0]->mem) + 8), 123456);
+  ASSERT_EQ(KUint64(rs.data[1][1]->mem), 10187);
+  ASSERT_EQ(KUint64(rs.data[2][1]->mem), OperatorTypeOfRecord::OP_TYPE_TAG_UPDATE);
+  ASSERT_EQ(KUint64(rs.data[3][1]->mem), 0);
+  ASSERT_EQ(KUint64((char*)(rs.data[3][1]->mem) + 8), 0);
   delete m_iter;
 
   osn_spans.clear();
   osn_spans.push_back({10187, 10189});
   entity_id_list.clear();
   rs.clear();
-  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, &hash_id_spans, &iter);
+  s = ts_table_v2->GetTagIteratorByOSN(ctx_, 1, scan_cols, osn_spans, UINT64_MAX, &hash_id_spans, &iter);
   ASSERT_EQ(s, KStatus::SUCCESS);
   s = iter->Next(&entity_id_list, &rs, &count);
   ASSERT_EQ(s, KStatus::SUCCESS);

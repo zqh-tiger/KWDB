@@ -19,23 +19,26 @@ const string engine_root_path = "./tsdb";
 class TestTsTableMaxTSV2 : public ::testing::Test {
  public:
   EngineOptions opts_;
-  TSEngineImpl *engine_;
-  kwdbContext_t g_ctx_;
-  kwdbContext_p ctx_;
+  TSEngineImpl *engine_{nullptr};
+  kwdbContext_t g_ctx_{};
+  kwdbContext_p ctx_{&g_ctx_};
 
-  virtual void SetUp() override {
-    ctx_ = &g_ctx_;
-    InitKWDBContext(ctx_);
-    KWDBDynamicThreadPool::GetThreadPool().Init(8, ctx_);
+  static void SetUpTestCase() {
+    KWDBDynamicThreadPool::GetThreadPool().InitImplicitly();
   }
 
-  virtual void TearDown() override {
-    KWDBDynamicThreadPool::GetThreadPool().Stop();
+  static void TearDownTestCase() {
+    auto& pool = KWDBDynamicThreadPool::GetThreadPool();
+    if (!pool.IsStop()) {
+      pool.Stop();
+    }
+#ifdef WITH_TESTS
+    KWDBDynamicThreadPool::Destroy();
+#endif
   }
 
  public:
   TestTsTableMaxTSV2() {
-    ctx_ = &g_ctx_;
     InitKWDBContext(ctx_);
     opts_.db_path = engine_root_path;
     Remove(engine_root_path);
@@ -45,10 +48,8 @@ class TestTsTableMaxTSV2 : public ::testing::Test {
     EXPECT_EQ(s, KStatus::SUCCESS);
   }
 
-  ~TestTsTableMaxTSV2() {
-    if (engine_) {
-      delete engine_;
-    }
+  ~TestTsTableMaxTSV2() override {
+    delete engine_;
   }
   std::string GetPrimaryKey(TSTableID table_id, TSEntityID dev_id) {
     std::shared_ptr<kwdbts::TsTableSchemaManager> schema_mgr;
@@ -120,7 +121,7 @@ TEST_F(TestTsTableMaxTSV2, InsertOneRecord) {
 
   timestamp64 ts;
   EntityResultIndex entity_id;
-  s = ts_table->GetLastRowEntity(ctx_, entity_id, ts);
+  s = ts_table->GetLastRowEntity(ctx_, entity_id, ts, UINT64_MAX);
   EXPECT_EQ(s, KStatus::SUCCESS);
   EXPECT_EQ(entity_id.entityGroupId, 1);
   EXPECT_GE(entity_id.subGroupId, 1);
@@ -168,7 +169,7 @@ TEST_F(TestTsTableMaxTSV2, InsertManyTags) {
 
   timestamp64 ts;
   EntityResultIndex entity_id;
-  s = ts_table->GetLastRowEntity(ctx_, entity_id, ts);
+  s = ts_table->GetLastRowEntity(ctx_, entity_id, ts, UINT64_MAX);
   EXPECT_EQ(s, KStatus::SUCCESS);
   EXPECT_EQ(entity_id.entityGroupId, 1);
   EXPECT_GE(entity_id.subGroupId, 1);
@@ -216,7 +217,7 @@ TEST_F(TestTsTableMaxTSV2, InsertManyTags1) {
 
   timestamp64 ts;
   EntityResultIndex entity_id;
-  s = ts_table->GetLastRowEntity(ctx_, entity_id, ts);
+  s = ts_table->GetLastRowEntity(ctx_, entity_id, ts, UINT64_MAX);
   EXPECT_EQ(s, KStatus::SUCCESS);
   EXPECT_EQ(entity_id.entityGroupId, 1);
   EXPECT_GE(entity_id.subGroupId, 1);
@@ -265,7 +266,7 @@ TEST_F(TestTsTableMaxTSV2, restart) {
 
   timestamp64 ts1;
   EntityResultIndex entity_id1;
-  s = ts_table1->GetLastRowEntity(ctx_, entity_id1, ts1);
+  s = ts_table1->GetLastRowEntity(ctx_, entity_id1, ts1, UINT64_MAX);
   EXPECT_EQ(s, KStatus::SUCCESS);
   EXPECT_EQ(entity_id1.entityGroupId, 1);
   EXPECT_GE(entity_id1.subGroupId, 1);
@@ -283,7 +284,7 @@ TEST_F(TestTsTableMaxTSV2, restart) {
 
   timestamp64 ts2;
   EntityResultIndex entity_id2;
-  s = ts_table2->GetLastRowEntity(ctx_, entity_id2, ts2);
+  s = ts_table2->GetLastRowEntity(ctx_, entity_id2, ts2, UINT64_MAX);
   EXPECT_EQ(s, KStatus::SUCCESS);
   EXPECT_EQ(entity_id2.entityGroupId, entity_id1.entityGroupId);
   EXPECT_EQ(entity_id2.subGroupId, entity_id1.subGroupId);
@@ -330,7 +331,7 @@ TEST_F(TestTsTableMaxTSV2, deleteSomeData) {
 
   timestamp64 ts1;
   EntityResultIndex entity_id1;
-  s = ts_table->GetLastRowEntity(ctx_, entity_id1, ts1);
+  s = ts_table->GetLastRowEntity(ctx_, entity_id1, ts1, UINT64_MAX);
   EXPECT_EQ(s, KStatus::SUCCESS);
   EXPECT_EQ(entity_id1.entityGroupId, 1);
   EXPECT_GE(entity_id1.subGroupId, 1);
@@ -348,7 +349,7 @@ TEST_F(TestTsTableMaxTSV2, deleteSomeData) {
 
   timestamp64 ts2;
   EntityResultIndex entity_id2;
-  s = ts_table->GetLastRowEntity(ctx_, entity_id2, ts2);
+  s = ts_table->GetLastRowEntity(ctx_, entity_id2, ts2, UINT64_MAX);
   EXPECT_EQ(s, KStatus::SUCCESS);
   EXPECT_EQ(entity_id2.entityGroupId, 1);
   EXPECT_GE(entity_id2.subGroupId, 1);

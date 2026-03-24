@@ -19,23 +19,26 @@ const string engine_root_path = "./tsdb";
 class TestV2DeleteTest : public ::testing::Test {
  public:
   EngineOptions opts_;
-  TSEngineImpl *engine_;
-  kwdbContext_t g_ctx_;
-  kwdbContext_p ctx_;  
+  TSEngineImpl *engine_{nullptr};
+  kwdbContext_t g_ctx_{};
+  kwdbContext_p ctx_{&g_ctx_};
 
-  virtual void SetUp() override {
-    ctx_ = &g_ctx_;
-    InitKWDBContext(ctx_);
-    KWDBDynamicThreadPool::GetThreadPool().Init(8, ctx_);
+  static void SetUpTestCase() {
+    KWDBDynamicThreadPool::GetThreadPool().InitImplicitly();
   }
 
-  virtual void TearDown() override {
-    KWDBDynamicThreadPool::GetThreadPool().Stop();
+  static void TearDownTestCase() {
+    auto& pool = KWDBDynamicThreadPool::GetThreadPool();
+    if (!pool.IsStop()) {
+      pool.Stop();
+    }
+#ifdef WITH_TESTS
+    KWDBDynamicThreadPool::Destroy();
+#endif
   }
 
  public:
   TestV2DeleteTest() {
-    ctx_ = &g_ctx_;
     InitKWDBContext(ctx_);
     opts_.db_path = engine_root_path;
     Remove(engine_root_path);
@@ -46,10 +49,8 @@ class TestV2DeleteTest : public ::testing::Test {
     EngineOptions::g_dedup_rule = DedupRule::KEEP;
   }
 
-  ~TestV2DeleteTest() {
-    if (engine_) {
-      delete engine_;
-    }
+  ~TestV2DeleteTest() override {
+    delete engine_;
   }
 
   std::string GetPrimaryKey(TSTableID table_id, TSEntityID dev_id) {
@@ -96,9 +97,10 @@ class TestV2DeleteTest : public ::testing::Test {
     std::vector<BlockFilter> block_filter = {};
     std::vector<k_int32> agg_extend_cols = {};
     std::vector<timestamp64> ts_points = {};
+    FillParams fill_params;
     auto s = entity_v_group->GetIterator(ctx_, table_schema_mgr->GetCurrentVersion(), entity_ids, ts_spans, block_filter,
                         scan_cols, scan_cols, agg_extend_cols, scan_agg_types, table_schema_mgr,
-                        schema, &ts_iter, entity_v_group, ts_points, false, false);
+                        schema, &ts_iter, entity_v_group, ts_points, false, false, UINT64_MAX, fill_params);
     ASSERT_EQ(s, KStatus::SUCCESS);
 
     ResultSet res{(k_uint32) scan_cols.size()};

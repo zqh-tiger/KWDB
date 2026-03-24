@@ -35,12 +35,11 @@ StorageHandler::~StorageHandler() {
 
 EEIteratorErrCode StorageHandler::Init(kwdbContext_p ctx) {
   EnterFunc();
-  ErrorInfo err_info;
   KStatus ret = KStatus::FAIL;
   TSEngine *ts_engine = static_cast<TSEngine *>(ctx->ts_engine);
   if (ts_engine) {
     bool is_dropped = false;
-    ret = ts_engine->GetTsTable(ctx, table_->object_id_, ts_table_, is_dropped, true, err_info, table_->table_version_);
+    ret = ts_engine->GetTsTable(ctx, table_->object_id_, ts_table_, is_dropped, true, table_->table_version_);
   }
   if (ret == KStatus::FAIL) {
     EEPgErrorInfo::SetPgErrorInfo(ERRCODE_FETCH_DATA_FAILED,
@@ -57,6 +56,60 @@ k_uint32 StorageHandler::GetStorageOffset() {
 
 void StorageHandler::SetSpans(std::vector<KwTsSpan> *ts_spans) {
   ts_spans_ = ts_spans;
+}
+
+void StorageHandler::SetFill(const TSFill *ts_fill) {
+  ts_fill_params_.fill_type = static_cast<FillType>(static_cast<int>(ts_fill->filltype()));
+  ts_fill_params_.before_range = (timestamp64)ts_fill->beforerange();
+  ts_fill_params_.after_range = (timestamp64)ts_fill->afterrange();
+  ts_fill_params_.const_data_value = ts_fill->constvalue();
+  ts_fill_params_.const_data_length = ts_fill->constwidh();
+  ts_fill_params_.const_n_data_length = ts_fill->nconstwidh();
+  ts_fill_params_.const_int_value = ts_fill->constintvalue();
+  ts_fill_params_.int_value_flag = ts_fill->intvalueflag();
+  // convert datatype to enum DATATYPE
+  switch (ts_fill->datatype()) {
+    case roachpb::DataType::BOOL:
+      ts_fill_params_.const_data_type = DATATYPE::BOOL;
+      break;
+    case roachpb::DataType::SMALLINT:
+      ts_fill_params_.const_data_type = DATATYPE::INT16;
+      break;
+    case roachpb::DataType::INT:
+      ts_fill_params_.const_data_type = DATATYPE::INT32;
+      break;
+    case roachpb::DataType::BIGINT:
+      ts_fill_params_.const_data_type = DATATYPE::INT64;
+      break;
+    case roachpb::DataType::FLOAT:
+      ts_fill_params_.const_data_type = DATATYPE::FLOAT;
+      break;
+    case roachpb::DataType::DOUBLE:
+      ts_fill_params_.const_data_type = DATATYPE::DOUBLE;
+      break;
+    case roachpb::DataType::CHAR:
+    ts_fill_params_.const_data_type = DATATYPE::CHAR;
+    break;
+    case roachpb::DataType::VARCHAR:
+    ts_fill_params_.const_data_type = DATATYPE::VARSTRING;
+    break;
+    case roachpb::DataType::NCHAR:
+    case roachpb::DataType::BINARY:
+    ts_fill_params_.const_data_type = DATATYPE::BINARY;
+    break;
+    case roachpb::DataType::NVARCHAR:
+    case roachpb::DataType::VARBINARY:
+      ts_fill_params_.const_data_type = DATATYPE::VARBINARY;
+      break;
+    default:
+      ts_fill_params_.const_data_type = DATATYPE::NO_TYPE;
+      break;
+  }
+  for (const auto& col_id : table_->scan_cols_) {
+    if (table_->fields_[col_id]->get_storage_type() == roachpb::DataType::VARBINARY) {
+      ts_fill_params_.varbytes_col_ids.insert(col_id);
+    }
+  }
 }
 
 EEIteratorErrCode StorageHandler::HandleTsItrAndGetTagData(
@@ -235,6 +288,7 @@ EEIteratorErrCode StorageHandler::TsOffsetNext(kwdbContext_p ctx, TsScanStats* t
       .sorted = table_->ordered_scan_,
       .offset = table_->offset_,
       .limit = table_->limit_,
+      .scan_osn = table_->osn_id_,
     };
     ret = ts_table_->GetOffsetIterator(ctx, params, &ts_iterator);
     if (KStatus::FAIL == ret) {
@@ -261,8 +315,9 @@ EEIteratorErrCode StorageHandler::TsOffsetNext(kwdbContext_p ctx, TsScanStats* t
   // get tag value
   TagRowBatchPtr tag_rowbatch = std::make_shared<TagRowBatch>();
   tag_rowbatch->Init(table_);
+  TS_OSN osn = table_->osn_id_;
   ret = ts_table_->GetTagList(ctx, {row_batch->res_.entity_index}, table_->scan_tags_,
-                                      &tag_rowbatch->res_, &tag_rowbatch->count_, table_->table_version_);
+                                      &tag_rowbatch->res_, &tag_rowbatch->count_, table_->table_version_, osn);
   if (KStatus::FAIL == ret) {
     LOG_ERROR("TsTable::GetTagList() Failed\n");
     EEPgErrorInfo::SetPgErrorInfo(ERRCODE_FETCH_DATA_FAILED,
@@ -305,7 +360,7 @@ EEIteratorErrCode StorageHandler::TsStatisticCacheNext(kwdbContext_p ctx, TsScan
   }
 
   bool valid = false;
-  KStatus ret = ts_table_->GetLastRowBatch(ctx, table_->table_version_, last_scan_cols,
+  KStatus ret = ts_table_->GetLastRowBatch(ctx, table_->table_version_, last_scan_cols, table_->osn_id_,
                                            &row_batch->res_, &row_batch->count_, valid);
   if (KStatus::FAIL == ret) {
     EEPgErrorInfo::SetPgErrorInfo(ERRCODE_FETCH_DATA_FAILED,
@@ -323,7 +378,7 @@ EEIteratorErrCode StorageHandler::TsStatisticCacheNext(kwdbContext_p ctx, TsScan
     if (entities_.empty()) {
       timestamp64 last_ts;
       EntityResultIndex entity;
-      KStatus ret = ts_table_->GetLastRowEntity(ctx, entity, last_ts);
+      KStatus ret = ts_table_->GetLastRowEntity(ctx, entity, last_ts, table_->osn_id_);
       if (KStatus::FAIL == ret) {
         code = EEIteratorErrCode::EE_ERROR;
         Return(code);
@@ -350,6 +405,7 @@ EEIteratorErrCode StorageHandler::TsStatisticCacheNext(kwdbContext_p ctx, TsScan
           .sorted = table_->ordered_scan_,
           .offset = table_->offset_,
           .limit = table_->limit_,
+          .scan_osn = table_->osn_id_,
       };
       ret = ts_table_->GetIterator(ctx, params, &ts_iterator);
       if (KStatus::FAIL == ret) {
@@ -382,8 +438,9 @@ EEIteratorErrCode StorageHandler::TsStatisticCacheNext(kwdbContext_p ctx, TsScan
   // get tag value
   TagRowBatchPtr tag_rowbatch = std::make_shared<TagRowBatch>();
   tag_rowbatch->Init(table_);
+  TS_OSN osn = table_->osn_id_;
   ret = ts_table_->GetTagList(ctx, {row_batch->res_.entity_index}, table_->scan_tags_,
-                                      &tag_rowbatch->res_, &tag_rowbatch->count_, table_->table_version_);
+                                      &tag_rowbatch->res_, &tag_rowbatch->count_, table_->table_version_, osn);
   if (KStatus::FAIL == ret) {
     LOG_ERROR("TsTable::GetTagList() Failed\n");
     code = EEIteratorErrCode::EE_ERROR;
@@ -600,8 +657,9 @@ EEIteratorErrCode StorageHandler::NewTsIterator(kwdbContext_p ctx) {
       .sorted = table_->ordered_scan_,
       .offset = table_->offset_,
       .limit = table_->limit_,
+      .scan_osn = table_->osn_id_,
+      .fill_params = ts_fill_params_,
     };
-
     ret = ts_table_->GetIterator(ctx, params, &ts_iterator);
 
     if (KStatus::FAIL == ret) {
@@ -618,17 +676,18 @@ EEIteratorErrCode StorageHandler::NewTsIterator(kwdbContext_p ctx) {
 EEIteratorErrCode StorageHandler::NewTagIterator(kwdbContext_p ctx) {
   EnterFunc();
   KStatus ret = FAIL;
+  TS_OSN osn = table_->osn_id_;
   if (EngineOptions::isSingleNode()) {
     BaseEntityIterator* iter = nullptr;
     if (read_mode_ == TSTableReadMode::metaTable) {
-        ret = ts_table_->GetTagIterator(ctx, {}, {}, &iter, table_->table_version_);
+        ret = ts_table_->GetTagIterator(ctx, {}, {}, &iter, table_->table_version_, osn);
     } else {
-        ret = ts_table_->GetTagIterator(ctx, table_->scan_tags_, {}, &iter, table_->table_version_);
+        ret = ts_table_->GetTagIterator(ctx, table_->scan_tags_, {}, &iter, table_->table_version_, osn);
     }
     tag_iterator = iter;
   } else {
     BaseEntityIterator *tag = nullptr;
-    ret = ts_table_->GetTagIterator(ctx, table_->scan_tags_, &(table_->hash_spans_), &tag, table_->table_version_);
+    ret = ts_table_->GetTagIterator(ctx, table_->scan_tags_, &(table_->hash_spans_), &tag, table_->table_version_, osn);
     tag_iterator = tag;
   }
   if (ret == KStatus::FAIL) {
@@ -678,7 +737,7 @@ EEIteratorErrCode StorageHandler::GetEntityIdList(kwdbContext_p ctx,
     }
     ret = ts_table_->GetEntityIdList(ctx, primary_tags, tags_index_id, tags, tp, table_->scan_tags_,
                                      &(table_->hash_spans_), &tag_rowbatch_->entity_indexs_, &tag_rowbatch_->res_,
-                                     &tag_rowbatch_->count_, table_->table_version_);
+                                     &tag_rowbatch_->count_, table_->table_version_, table_->osn_id_);
     if (ret != SUCCESS) {
       EEPgErrorInfo::SetPgErrorInfo(ERRCODE_FETCH_DATA_FAILED,
                                   "scanning column data fail when getting ts entity list");
@@ -751,11 +810,11 @@ EEIteratorErrCode StorageHandler::GetTagDataChunkWithPrimaryTags(kwdbContext_p c
 
   std::vector<uint64_t> tags_index_id;
   std::vector<void*> tags;
-
+  TS_OSN osn = table_->osn_id_;
   do {
     KStatus ret = ts_table_->GetEntityIdList(ctx, primary_tags, tags_index_id, tags, TSTagOpType::opUnKnow,
                                              table_->scan_tags_, &(table_->hash_spans_), &tag_rowbatch_->entity_indexs_,
-                                             &tag_rowbatch_->res_, &tag_rowbatch_->count_);
+                                             &tag_rowbatch_->res_, &tag_rowbatch_->count_, 1, osn);
     if (ret != SUCCESS) {
       break;
     }

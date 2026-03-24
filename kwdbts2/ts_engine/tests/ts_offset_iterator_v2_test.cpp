@@ -19,23 +19,26 @@ const string engine_root_path = "./tsdb";
 class TestOffsetIteratorV2 : public ::testing::Test {
  public:
   EngineOptions opts_;
-  TSEngineImpl *engine_;
-  kwdbContext_t g_ctx_;
-  kwdbContext_p ctx_;
+  TSEngineImpl *engine_{nullptr};
+  kwdbContext_t g_ctx_{};
+  kwdbContext_p ctx_{&g_ctx_};
 
-  virtual void SetUp() override {
-    ctx_ = &g_ctx_;
-    InitKWDBContext(ctx_);
-    KWDBDynamicThreadPool::GetThreadPool().Init(8, ctx_);
+  static void SetUpTestCase() {
+    KWDBDynamicThreadPool::GetThreadPool().InitImplicitly();
   }
 
-  virtual void TearDown() override {
-    KWDBDynamicThreadPool::GetThreadPool().Stop();
+  static void TearDownTestCase() {
+    auto& pool = KWDBDynamicThreadPool::GetThreadPool();
+    if (!pool.IsStop()) {
+      pool.Stop();
+    }
+#ifdef WITH_TESTS
+    KWDBDynamicThreadPool::Destroy();
+#endif
   }
 
  public:
   TestOffsetIteratorV2() {
-    ctx_ = &g_ctx_;
     InitKWDBContext(ctx_);
     opts_.db_path = engine_root_path;
     Remove(engine_root_path);
@@ -45,10 +48,8 @@ class TestOffsetIteratorV2 : public ::testing::Test {
     EXPECT_EQ(s, KStatus::SUCCESS);
   }
 
-  ~TestOffsetIteratorV2() {
-    if (engine_) {
-      delete engine_;
-    }
+  ~TestOffsetIteratorV2() override {
+    delete engine_;
   }
 };
 
@@ -99,6 +100,7 @@ TEST_F(TestOffsetIteratorV2, basic) {
   std::vector<k_int32> agg_extend_cols;
   std::vector<BlockFilter> block_filter;
   std::vector<KwTsSpan> ts_spans = {ts_span};
+  FillParams fill_params;
   IteratorParams params = {
       .entity_ids = entity_results,
       .ts_spans = ts_spans,
@@ -112,6 +114,8 @@ TEST_F(TestOffsetIteratorV2, basic) {
       .sorted = false,
       .offset = 5000,
       .limit = 10,
+      .scan_osn = UINT64_MAX,
+      .fill_params = fill_params,
   };
   // ASSERT_EQ(ts_table->GetEntityIdList(ctx_, 0, UINT64_MAX, entity_results), KStatus::SUCCESS);
   ASSERT_EQ(ts_table->GetIterator(ctx_, params, &iter1), KStatus::SUCCESS);
@@ -231,6 +235,7 @@ TEST_F(TestOffsetIteratorV2, multi_partition) {
   std::vector<k_int32> agg_extend_cols;
   std::vector<BlockFilter> block_filter;
   std::vector<KwTsSpan> ts_spans = {ts_span};
+  FillParams fill_params;
   IteratorParams params = {
       .entity_ids = entity_results,
       .ts_spans = ts_spans,
@@ -244,6 +249,8 @@ TEST_F(TestOffsetIteratorV2, multi_partition) {
       .sorted = false,
       .offset = 15000,
       .limit = 10,
+      .scan_osn = UINT64_MAX,
+      .fill_params = fill_params,
   };
   // ASSERT_EQ(ts_table->GetEntityIndex(ctx_, 0, UINT64_MAX, entity_results), KStatus::SUCCESS);
   ASSERT_EQ(ts_table->GetIterator(ctx_, params, &iter1), KStatus::SUCCESS);
@@ -351,6 +358,7 @@ TEST_F(TestOffsetIteratorV2, extreme) {
   std::vector<k_int32> agg_extend_cols;
   std::vector<BlockFilter> block_filter;
   std::vector<KwTsSpan> ts_spans = {ts_span};
+  FillParams fill_params;
   IteratorParams params = {
       .entity_ids = entity_results,
       .ts_spans = ts_spans,
@@ -364,6 +372,8 @@ TEST_F(TestOffsetIteratorV2, extreme) {
       .sorted = false,
       .offset = 1,
       .limit = 1,
+      .scan_osn = UINT64_MAX,
+      .fill_params = fill_params,
   };
   // ASSERT_EQ(ts_table->GetEntityIndex(ctx_, 0, UINT64_MAX, entity_results), KStatus::SUCCESS);
   ASSERT_EQ(ts_table->GetIterator(ctx_, params, &iter1), KStatus::SUCCESS);

@@ -9,6 +9,8 @@
 // MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 // See the Mulan PSL v2 for more details.
 
+#include <string>
+
 #include "ts_batch_data_worker.h"
 #include "ee_tag_row_batch.h"
 #include "libkwdbts2.h"
@@ -40,7 +42,7 @@ TsReadBatchDataWorker::TsReadBatchDataWorker(TSEngineImpl* ts_engine, TSTableID 
                                                table_version_(table_version), ts_span_(ts_span), actual_ts_span_(ts_span),
                                                entity_indexes_(std::move(entity_indexes)) {}
 
-KStatus TsReadBatchDataWorker::GetTagValue(kwdbContext_p ctx, bool& not_found) {
+KStatus TsReadBatchDataWorker::GetTagValue(kwdbContext_p ctx) {
   // get tag schema
   std::vector<TagInfo> tags_info;
   KStatus s = schema_->GetTagMeta(table_version_, tags_info);
@@ -57,16 +59,15 @@ KStatus TsReadBatchDataWorker::GetTagValue(kwdbContext_p ctx, bool& not_found) {
   // init tag iterator
   ResultSet res(scan_tags.size());
   uint32_t count;
-  s = ts_table_->GetTagList(ctx, {cur_entity_index_}, scan_tags, &res, &count, table_version_);
+  s = (dynamic_cast<TsTableV2Impl*>(ts_table_.get()))->
+      GetTagListByRowNum(ctx, {cur_entity_index_}, scan_tags, UINT64_MAX, &res, &count, table_version_);
   if (s != KStatus::SUCCESS) {
     LOG_ERROR("GetTagIterator failed");
     return KStatus::FAIL;
   }
-  not_found = false;
   if (count != 1) {
-    LOG_INFO("cannot find this tag, maybe be deleted rightnow. count=%d", count);
-    not_found = true;
-    return KStatus::SUCCESS;
+    LOG_ERROR("cannot find this tag. count=%d", count);
+    return KStatus::FAIL;
   }
 
   // tag data
@@ -179,18 +180,13 @@ KStatus TsReadBatchDataWorker::NextBlockSpansIterator() {
 }
 
 KStatus TsReadBatchDataWorker::Init(kwdbContext_p ctx) {
-  ErrorInfo err_info;
   bool is_dropped = false;
-  KStatus s = ts_engine_->GetTsTable(ctx, table_id_, ts_table_, is_dropped, true, err_info, table_version_);
+  KStatus s = ts_engine_->GetTsTable(ctx, table_id_, ts_table_, is_dropped, true, table_version_);
   if (s != KStatus::SUCCESS) {
-    LOG_ERROR("GetTsTable[%lu] failed, %s", table_id_, err_info.toString().c_str());
+    LOG_ERROR("GetTsTable[%lu] failed", table_id_);
     return KStatus::FAIL;
   }
-  s = ts_engine_->GetTableSchemaMgr(ctx, table_id_, is_dropped, schema_);
-  if (s != KStatus::SUCCESS) {
-    LOG_ERROR("GetTableSchemaMgr[%lu] failed", table_id_);
-    return KStatus::FAIL;
-  }
+  schema_ = ts_table_->GetSchemaManager();
   // update ts span with lifetime
   auto life_time = schema_->GetLifeTime();
   if (life_time.ts != 0) {
@@ -235,8 +231,11 @@ std::string TsReadBatchDataWorker::GenKey(TSTableID table_id, uint32_t table_ver
 }
 
 KStatus TsReadBatchDataWorker::GenerateBatchData(kwdbContext_p ctx,
-  std::shared_ptr<TsBlockSpan> block_span, bool& not_found_tag) {
+  std::shared_ptr<TsBlockSpan> block_span) {
   cur_batch_data_.Clear();
+  auto op_osn = reinterpret_cast<OperatorInfoOfRecord*>(cur_entity_index_.op_with_osn.get());
+  assert(op_osn != nullptr);
+  cur_batch_data_.SetTagOSN(op_osn->osn);
   // hash point
   cur_batch_data_.SetHashPoint(cur_entity_index_.hash_point);
   // ts version
@@ -245,14 +244,10 @@ KStatus TsReadBatchDataWorker::GenerateBatchData(kwdbContext_p ctx,
   uint32_t ptags_size = cur_entity_index_.p_tags_size;
   cur_batch_data_.AddPrimaryTag({reinterpret_cast<char*>(cur_entity_index_.mem.get()), ptags_size});
   // tag value
-  KStatus s = GetTagValue(ctx, not_found_tag);
+  KStatus s = GetTagValue(ctx);
   if (s != KStatus::SUCCESS) {
     LOG_ERROR("add tag failed");
     return s;
-  }
-  if (not_found_tag) {
-    cur_batch_data_.Clear();
-    return KStatus::SUCCESS;
   }
   // add TsBlockSpan info
   if (block_span) {
@@ -271,25 +266,15 @@ KStatus TsReadBatchDataWorker::GenerateBatchData(kwdbContext_p ctx,
 
 KStatus TsReadBatchDataWorker::Read(kwdbContext_p ctx, TSSlice* data, uint32_t* row_num) {
   do {
-    bool not_found_tag = false;
-    KStatus s = Read(ctx, data, row_num, not_found_tag);
+    KStatus s = ReadOnce(ctx, data, row_num);
     if (s != KStatus::SUCCESS) {
       return s;
-    }
-    if (not_found_tag) {
-      if (entity_indexes_.empty()) {
-        is_finished_ = true;
-        return KStatus::SUCCESS;
-      }
-      cur_entity_index_ = entity_indexes_[entity_indexes_.size() - 1];
-      entity_indexes_.pop_back();
-      block_spans_iterator_ = nullptr;
     }
   } while (*row_num == 0 && !is_finished_);
   return KStatus::SUCCESS;
 }
 
-KStatus TsReadBatchDataWorker::Read(kwdbContext_p ctx, TSSlice* data, uint32_t* row_num, bool& not_found_tag) {
+KStatus TsReadBatchDataWorker::ReadOnce(kwdbContext_p ctx, TSSlice* data, uint32_t* row_num) {
   *row_num = 0;
   data->data = nullptr;
   data->len = 0;
@@ -304,14 +289,10 @@ KStatus TsReadBatchDataWorker::Read(kwdbContext_p ctx, TSSlice* data, uint32_t* 
     if (block_spans_iterator_ == nullptr) {
       cur_entity_tag_only = true;
       // generate batch data
-      KStatus s = GenerateBatchData(ctx, nullptr, not_found_tag);
+      KStatus s = GenerateBatchData(ctx, nullptr);
       if (s != KStatus::SUCCESS) {
         LOG_ERROR("GenerateBatchData failed");
         return s;
-      }
-      if (not_found_tag) {
-        LOG_INFO("GenerateBatchData not found valid tag.");
-        return KStatus::SUCCESS;
       }
       *row_num = 1;
       total_read_ += *row_num;
@@ -341,14 +322,10 @@ KStatus TsReadBatchDataWorker::Read(kwdbContext_p ctx, TSSlice* data, uint32_t* 
     return KStatus::SUCCESS;
   }
   // generate batch data
-  KStatus s = GenerateBatchData(ctx, cur_block_span, not_found_tag);
+  KStatus s = GenerateBatchData(ctx, cur_block_span);
   if (s != KStatus::SUCCESS) {
     LOG_ERROR("GenerateBatchData failed");
     return s;
-  }
-  if (not_found_tag) {
-    LOG_INFO("GenerateBatchData not found valid tag.");
-    return KStatus::SUCCESS;
   }
   // set data
   *row_num = cur_block_span->GetRowNum();
@@ -447,7 +424,11 @@ std::atomic<int64_t> w_file_no = 0;
 
 KStatus TsWriteBatchDataWorker::Init(kwdbContext_p ctx) {
   TsIOEnv* env = &TsIOEnv::GetInstance();
-  std::string file_path = ts_engine_->GetDbDir() + "/temp_db_/" + std::to_string(job_id_)
+  std::string tmp_path = ts_engine_->GetDbDir() + "/temp_db_/";
+  if (access(tmp_path.c_str(), 0)) {
+    fs::create_directories(tmp_path);
+  }
+  std::string file_path = tmp_path + std::to_string(job_id_)
                           + "." + std::to_string(w_file_no++) + ".data";
   if (env->NewAppendOnlyFile(file_path, &w_file_, true, -1) != KStatus::SUCCESS) {
     LOG_ERROR("TsWriteBatchDataWorker::Init NewAppendOnlyFile failed, file_path=%s", file_path.c_str())
@@ -460,14 +441,16 @@ KStatus TsWriteBatchDataWorker::Init(kwdbContext_p ctx) {
 KStatus TsWriteBatchDataWorker::GetTagPayload(uint32_t table_version, TSSlice* data, std::string& tag_payload_str) {
   tag_payload_str.clear();
   tag_payload_str.append(data->data, data->len);
+  auto tag_osn_addr = data->data + TsBatchData::tag_osn_offset_;
+  memcpy(tag_payload_str.data() + TsRawPayload::txn_id_offset_, tag_osn_addr, TsBatchData::tag_osn_size_);
   // update table version
-  memcpy(tag_payload_str.data() + TsBatchData::ts_version_offset_, &table_version, TsBatchData::ts_version_size_);
+  memcpy(tag_payload_str.data() + TsRawPayload::ts_version_offset_, &table_version, TsBatchData::ts_version_size_);
   // update tag row num
   uint32_t row_num = 1;
-  memcpy(tag_payload_str.data() + TsBatchData::row_num_offset_, &row_num, TsBatchData::row_num_size_);
+  memcpy(tag_payload_str.data() + TsRawPayload::row_num_offset_, &row_num, TsBatchData::row_num_size_);
   // update tag type
   uint8_t tag_type = DataTagFlag::TAG_ONLY;
-  memcpy(tag_payload_str.data() + TsBatchData::row_type_offset_, &tag_type, TsBatchData::row_type_size_);
+  memcpy(tag_payload_str.data() + TsRawPayload::row_type_offset_, &tag_type, TsBatchData::row_type_size_);
   return KStatus::SUCCESS;
 }
 
@@ -485,25 +468,20 @@ KStatus TsWriteBatchDataWorker::Write(kwdbContext_p ctx, TSTableID table_id, uin
   }
 
   // get or create ts table
-  ErrorInfo err_info;
   std::shared_ptr<TsTable> ts_table;
   bool is_dropped = false;
-  KStatus s = ts_engine_->GetTsTable(ctx, table_id, ts_table, is_dropped, true, err_info, table_version);
+  KStatus s = ts_engine_->GetTsTable(ctx, table_id, ts_table, is_dropped, true, table_version);
   if (s != KStatus::SUCCESS) {
     if (is_dropped) {
       LOG_WARN("TsWriteBatchDataWorker::Write abort, table %lu has been dropped", table_id);
       return KStatus::SUCCESS;
     }
-    LOG_ERROR("GetTsTable[%lu] failed, %s", table_id, err_info.toString().c_str());
+    LOG_ERROR("GetTsTable[%lu] failed", table_id);
     return KStatus::FAIL;
   }
   // get table schema && create ts table
-  std::shared_ptr<TsTableSchemaManager> schema = nullptr;
-  s = ts_engine_->GetTableSchemaMgr(ctx, table_id, is_dropped, schema);
-  if (s != KStatus::SUCCESS) {
-    LOG_ERROR("GetTableSchemaMgr[%lu] failed", table_id);
-    return KStatus::FAIL;
-  }
+  std::shared_ptr<TsTableSchemaManager> schema = ts_table->GetSchemaManager();
+
   // parser tag info
   uint16_t p_tag_size = KUint16(data->data + TsBatchData::header_size_);
   uint32_t p_tag_offset = TsBatchData::header_size_ + sizeof(p_tag_size);
@@ -523,14 +501,15 @@ KStatus TsWriteBatchDataWorker::Write(kwdbContext_p ctx, TSTableID table_id, uin
   TSSlice tag_slice = {data->data, tags_data_offset + tags_data_size};
   std::string tag_payload_str;
   GetTagPayload(table_version, &tag_slice, tag_payload_str);
+  TSSlice pay_load_struct{tag_payload_str.data(), tag_payload_str.size()};
   // insert tag record
   uint32_t vgroup_id;
   TSEntityID entity_id;
   bool new_tag;
-  s = ts_engine_->InsertTagData(ctx, schema, 0, {tag_payload_str.data(), tag_payload_str.size()}, false,
+  s = ts_engine_->InsertTagData(ctx, schema, 0, pay_load_struct, false,
                                 vgroup_id, entity_id, new_tag);
   if (s != KStatus::SUCCESS) {
-    LOG_ERROR("InsertTagData[%lu] failed, %s", table_id, err_info.toString().c_str());
+    LOG_ERROR("InsertTagData[%lu] failed", table_id);
     return KStatus::FAIL;
   }
 
@@ -541,14 +520,6 @@ KStatus TsWriteBatchDataWorker::Write(kwdbContext_p ctx, TSTableID table_id, uin
     return KStatus::SUCCESS;
   }
 
-  if (schema == nullptr) {
-    is_dropped = false;
-    s = ts_engine_->GetTableSchemaMgr(ctx, table_id, is_dropped, schema);
-    if (s != KStatus::SUCCESS) {
-      LOG_ERROR("GetTableSchemaMgr[%lu] failed", table_id);
-      return KStatus::FAIL;
-    }
-  }
   TSSlice block_span_slice = {data->data + block_span_data_offset, block_span_data_size};
 //  std::string block_span_data;
 //  UpdateLSN(vgroup_id, &block_span_slice, block_span_data);
