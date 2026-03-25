@@ -1213,8 +1213,8 @@ auto CompressorManager::GetCompressor(TsCompAlg first, GenCompAlg second) const 
 auto CompressorManager::GetAlgorithm(DATATYPE dtype,
                                      const AttributeInfo &attr_info) const
     -> std::tuple<TsCompAlg, GenCompAlg> {
-  TsCompAlg first;
-  GenCompAlg second;
+  TsCompAlg first = TsCompAlg::kPlain;
+  GenCompAlg second = GenCompAlg::kPlain;
   switch (attr_info.encode_type) {
   case roachpb::KW_COL_ENCODE_TYPE_UNSPECIFIED: {
     auto it = default_algs_.find(dtype);
@@ -1234,10 +1234,13 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype,
       first = TsCompAlg::kSimple8B_V2_s32;
       break;
     case DATATYPE::INT64:
+    case DATATYPE::TIMESTAMP64:
+    case DATATYPE::TIMESTAMP64_MICRO:
+    case DATATYPE::TIMESTAMP64_NANO:
       first = TsCompAlg::kSimple8B_V2_s64;
       break;
     default:
-      LOG_ERROR("The data type does not match the encoding algorithm.");
+      LOG_ERROR("The data type %d does not match simple8b algorithm.", dtype);
       break;
     }
     break;
@@ -1297,7 +1300,6 @@ auto CompressorManager::GetDefaultCompressor(DATATYPE dtype) const -> TwoLevelCo
 
 bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, uint64_t count, TsBufferBuilder *output,
                                      TsCompAlg first, GenCompAlg second, int level) const {
-  // LOG_INFO("CompressorManager::CompressData: %d", level);
   switch (EngineOptions::compress_stage) {
     case 0:
       first = TsCompAlg::kPlain;
@@ -1319,7 +1321,6 @@ bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, 
 }
 
 bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, GenCompAlg alg, int level) const {
-  // LOG_INFO("CompressorManager::CompressVarchar: %d", level);
   static_assert(sizeof(alg) == sizeof(uint16_t));
   output->clear();
   PutFixed16(output, static_cast<uint16_t>(alg));
