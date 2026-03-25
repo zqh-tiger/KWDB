@@ -1297,6 +1297,7 @@ auto CompressorManager::GetDefaultCompressor(DATATYPE dtype) const -> TwoLevelCo
 
 bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, uint64_t count, TsBufferBuilder *output,
                                      TsCompAlg first, GenCompAlg second, int level) const {
+  // LOG_INFO("CompressorManager::CompressData: %d", level);
   switch (EngineOptions::compress_stage) {
     case 0:
       first = TsCompAlg::kPlain;
@@ -1318,6 +1319,7 @@ bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, 
 }
 
 bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, GenCompAlg alg, int level) const {
+  // LOG_INFO("CompressorManager::CompressVarchar: %d", level);
   static_assert(sizeof(alg) == sizeof(uint16_t));
   output->clear();
   PutFixed16(output, static_cast<uint16_t>(alg));
@@ -1331,7 +1333,7 @@ bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, 
     return false;
   }
   TsBufferBuilder tmp;
-  bool ok = it->second->Compress(input, &tmp, level);
+  bool ok = it->second->Compress(input, &tmp, algs_level_.at(alg)[level]);
   if (!ok) {
     return false;
   }
