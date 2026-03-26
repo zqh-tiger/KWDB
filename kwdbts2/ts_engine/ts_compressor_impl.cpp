@@ -1152,9 +1152,9 @@ CompressorManager::CompressorManager() {
   // lz4: no need
   // snappy: no need
   // zstd:
-  static constexpr int ZSTD_CLEVEL_LOW = 3;
-  static constexpr int ZSTD_CLEVEL_MEDIUM = 9;
-  static constexpr int ZSTD_CLEVEL_HIGH = 19;
+  static constexpr int ZSTD_CLEVEL_LOW = 1;
+  static constexpr int ZSTD_CLEVEL_MEDIUM = 3;
+  static constexpr int ZSTD_CLEVEL_HIGH = 9;
   // zlib:
   static constexpr int Z_CLEVEL_MEDIUM = 6;
 
