@@ -13,6 +13,7 @@
 #include <sys/types.h>
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #if defined(__GNUC__) && (__GNUC__ < 8)
   #include <experimental/filesystem>
@@ -778,15 +779,14 @@ KStatus TsEntitySegmentBuilder::WriteBatch(TSTableID tbl_id, uint32_t entity_id,
     block_data_header_size = 60;
     block_item.block_version = 0;
   } else if (batch_version >= 1 && batch_version < BATCH_VERSION_LIMIT) {
-    block_item.block_version =
-        *reinterpret_cast<uint32_t*>(block_data.data + TsBatchData::block_version_offset_in_span_data_);
+    block_item.block_version = DecodeFixed32(block_data.data + TsBatchData::block_version_offset_in_span_data_);
   } else {
     LOG_ERROR("TsEntitySegmentBuilder::WriteBatch failed, invalid batch version: %u", batch_version);
     return FAIL;
   }
 
-  uint32_t n_cols = *reinterpret_cast<uint32_t*>(block_data.data + TsBatchData::n_cols_offset_in_span_data_);
-  uint32_t n_rows = *reinterpret_cast<uint32_t*>(block_data.data +  + TsBatchData::n_rows_offset_in_span_data_);
+  uint32_t n_cols = DecodeFixed32(block_data.data + TsBatchData::n_cols_offset_in_span_data_);
+  uint32_t n_rows = DecodeFixed32(block_data.data + TsBatchData::n_rows_offset_in_span_data_);
 
   block_item.entity_id = entity_id;
   block_item.prev_block_id = entity_items_[entity_id].cur_block_id;  // pre block item id
@@ -795,12 +795,12 @@ KStatus TsEntitySegmentBuilder::WriteBatch(TSTableID tbl_id, uint32_t entity_id,
   block_item.n_rows = n_rows;
   block_item.block_len = *reinterpret_cast<uint32_t*>(block_data.data + block_data_header_size
                          + (n_cols - 1) * sizeof(uint32_t)) + sizeof(uint32_t) * n_cols;
-  block_item.min_ts = *reinterpret_cast<timestamp64*>(block_data.data + TsBatchData::min_ts_offset_in_span_data_);
-  block_item.max_ts = *reinterpret_cast<timestamp64*>(block_data.data + TsBatchData::max_ts_offset_in_span_data_);
-  block_item.min_osn = *reinterpret_cast<uint64_t*>(block_data.data + TsBatchData::min_osn_offset_in_span_data_);
-  block_item.max_osn = *reinterpret_cast<uint64_t*>(block_data.data + TsBatchData::max_osn_offset_in_span_data_);
-  block_item.first_osn = *reinterpret_cast<uint64_t*>(block_data.data + TsBatchData::first_osn_offset_in_span_data_);
-  block_item.last_osn = *reinterpret_cast<uint64_t*>(block_data.data + TsBatchData::last_osn_offset_in_span_data_);
+  block_item.min_ts = DecodeFixedTimestamp64(block_data.data + TsBatchData::min_ts_offset_in_span_data_);
+  block_item.max_ts = DecodeFixedTimestamp64(block_data.data + TsBatchData::max_ts_offset_in_span_data_);
+  block_item.min_osn = DecodeFixed64(block_data.data + TsBatchData::min_osn_offset_in_span_data_);
+  block_item.max_osn = DecodeFixed64(block_data.data + TsBatchData::max_osn_offset_in_span_data_);
+  block_item.first_osn = DecodeFixed64(block_data.data + TsBatchData::first_osn_offset_in_span_data_);
+  block_item.last_osn = DecodeFixed64(block_data.data + TsBatchData::last_osn_offset_in_span_data_);
 
   block_item.agg_len = *reinterpret_cast<uint32_t*>(block_data.data + block_data_header_size + block_item.block_len
                        + (n_cols - 2) * sizeof(uint32_t))  + sizeof(uint32_t) * (n_cols - 1);
