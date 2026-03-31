@@ -35,7 +35,6 @@
 std::map<std::string, std::string> g_cluster_settings;
 std::shared_mutex g_settings_mutex;
 bool g_engine_initialized = false;
-bool g_go_start_service = true;
 TSEngine* g_engine_ = nullptr;
 
 std::atomic<bool> g_is_vacuuming{false};
@@ -708,8 +707,8 @@ void TriggerSettingCallback(const std::string& key, const std::string& value) {
       EngineOptions::g_dedup_rule = kwdbts::DedupRule::OVERRIDE;
     } else if ("merge" == value) {
       EngineOptions::g_dedup_rule = kwdbts::DedupRule::MERGE;
-    } else if ("keep" == value) {
-      EngineOptions::g_dedup_rule = kwdbts::DedupRule::KEEP;
+    } else if ("keep.experimental" == value) {
+      EngineOptions::g_dedup_rule = kwdbts::DedupRule::KEEP_EXPERIMENTAL;
     } else if ("discard" == value) {
       EngineOptions::g_dedup_rule = kwdbts::DedupRule::DISCARD;
     } else {

@@ -48,7 +48,7 @@ int64_t EngineOptions::default_partition_interval = 3600 * 24 * 10;
 int64_t EngineOptions::block_cache_max_size = 1024 * 1024 * 1024;
 uint8_t EngineOptions::compress_stage = 2;
 CompressLevel EngineOptions::compress_level = CompressLevel::LOW;
-bool EngineOptions::compress_last_segment = false;
+bool EngineOptions::compress_last_segment = true;
 #ifdef KWBASE_OSS
 bool EngineOptions::force_sync_file = false;
 #else
@@ -63,7 +63,6 @@ GenCompAlg EngineOptions::compression_algorithm = GenCompAlg::kLz4;
 
 extern std::map<std::string, std::string> g_cluster_settings;
 extern std::shared_mutex g_settings_mutex;
-extern bool g_go_start_service;
 
 namespace kwdbts {
 
@@ -291,7 +290,6 @@ KStatus TSEngineImpl::Init(kwdbContext_p ctx) {
     }
   }
 #endif
-
   PreClearDroppedTables();
   fs::path db_path{options_.db_path};
   assert(!db_path.empty());
@@ -320,6 +318,7 @@ KStatus TSEngineImpl::Init(kwdbContext_p ctx) {
   std::vector<uint32_t> max_entity_id_MEI(options_.vgroup_max_num, 0);
   if (readEntityIds(max_entity_id_MEI) == KStatus::FAIL) {
     LOG_ERROR("Failed to read entity ids from MEI file.")
+    return KStatus::FAIL;
   }
 
   for (int vgroup_id = 1; vgroup_id <= EngineOptions::vgroup_max_num; vgroup_id++) {
@@ -531,9 +530,9 @@ KStatus TSEngineImpl::GetTsTable(kwdbContext_p ctx, const KTableKey& table_id, s
     }
     // 2. if table no exist. try to get schema from go level.
     LOG_INFO("try creating table[%lu] by schema from rocksdb. ", table_id);
-    if (!g_go_start_service) {  // unit test from c, just return false.
-      return KStatus::FAIL;
-    }
+#ifdef WITH_TESTS
+    return KStatus::FAIL;
+#endif
     char* error;
     size_t data_len = 0;
     char* data = getTableMetaByVersion(table_id, version, &data_len, &error);
@@ -855,10 +854,6 @@ KStatus TSEngineImpl::PutEntity(kwdbContext_p ctx, const KTableKey& table_id, ui
     }
   }
   return KStatus::SUCCESS;
-}
-
-KStatus TSEngineImpl::GetMeta(kwdbContext_p ctx, TSTableID table_id, uint32_t version, roachpb::CreateTsTable *meta) {
-  return schema_mgr_->GetMeta(ctx, table_id, version, meta);
 }
 
 KStatus TSEngineImpl::LogInit() {
@@ -2017,9 +2012,9 @@ KStatus TSEngineImpl::recover(kwdbts::kwdbContext_p ctx) {
             s = table->UndoAlterTable(ctx, incomplete[mtr_id]);
             if (s == KStatus::FAIL) {
               LOG_ERROR("Failed to recover alter table %ld.", table_id)
-              #ifdef WITH_TESTS
+#ifdef WITH_TESTS
               return s;
-              #endif
+#endif
             } else {
               table->TSxClean(ctx);
             }
@@ -2042,9 +2037,9 @@ KStatus TSEngineImpl::recover(kwdbts::kwdbContext_p ctx) {
             s = table->UndoCreateIndex(ctx, incomplete[mtr_id]);
             if (s == KStatus::FAIL) {
               LOG_ERROR("Failed to recover create index %ld.", table_id)
-              #ifdef WITH_TESTS
+#ifdef WITH_TESTS
               return s;
-              #endif
+#endif
             } else {
               table->TSxClean(ctx);
             }
@@ -2067,9 +2062,9 @@ KStatus TSEngineImpl::recover(kwdbts::kwdbContext_p ctx) {
             s = table->UndoDropIndex(ctx, incomplete[mtr_id]);
             if (s == KStatus::FAIL) {
               LOG_ERROR("Failed to recover drop index %ld.", table_id)
-              #ifdef WITH_TESTS
+#ifdef WITH_TESTS
               return s;
-              #endif
+#endif
             } else {
               table->TSxClean(ctx);
             }
@@ -2124,9 +2119,9 @@ KStatus TSEngineImpl::recover(kwdbts::kwdbContext_p ctx) {
         s = table->UndoCreateIndex(ctx, index_log);
         if (s == KStatus::FAIL) {
           LOG_ERROR("Failed to recover create index %ld.", table_id)
-          #ifdef WITH_TESTS
+#ifdef WITH_TESTS
           return s;
-          #endif
+#endif
         } else {
           table->TSxClean(ctx);
         }
@@ -2149,9 +2144,9 @@ KStatus TSEngineImpl::recover(kwdbts::kwdbContext_p ctx) {
         s = table->UndoDropIndex(ctx, index_log);
         if (s == KStatus::FAIL) {
           LOG_ERROR("Failed to recover drop index %ld.", table_id)
-          #ifdef WITH_TESTS
+#ifdef WITH_TESTS
           return s;
-          #endif
+#endif
         } else {
           table->TSxClean(ctx);
         }
@@ -2300,6 +2295,7 @@ KStatus TSEngineImpl::UpdateSetting(kwdbContext_p ctx) {
       KStatus s = CreateCheckpoint(ctx);
       if (s == KStatus::FAIL) {
         LOG_ERROR("Failed to CreateCheckpoint while UpdateSetting.")
+        return KStatus::FAIL;
       }
       options_.wal_level = std::stoll(value);
       LOG_INFO("update wal level to %hhu", options_.wal_level)

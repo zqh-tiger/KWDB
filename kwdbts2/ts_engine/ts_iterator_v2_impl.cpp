@@ -2142,8 +2142,8 @@ KStatus TsAggIteratorImpl::CountAggregate(TsScanStats* ts_scan_stats) {
           mem_ts_spans.push_back({mem_block->GetFirstTS(), mem_block->GetLastTS()});
           mem_count += mem_block->GetRowNum();
         }
-        if (EngineOptions::g_dedup_rule == DedupRule::KEEP ||
-        (checkTimestampWithSpans(mem_ts_spans, count_stats.min_ts, count_stats.max_ts) ==
+        if (EngineOptions::g_dedup_rule == DedupRule::KEEP_EXPERIMENTAL ||
+            (checkTimestampWithSpans(mem_ts_spans, count_stats.min_ts, count_stats.max_ts) ==
         TimestampCheckResult::NonOverlapping)) {
           KUint64(final_agg_data_[0].data) += count_stats.valid_count + mem_count;
         } else {
@@ -2163,7 +2163,7 @@ KStatus TsAggIteratorImpl::CountAggregate(TsScanStats* ts_scan_stats) {
       if (!count_stats.is_count_valid && count_stats.entity_id != 0 && EngineOptions::agg_stats_recalc_cycle != 0) {
         ret = vgroup_->AddRecalcEntity(partition_version->GetPartitionIdentifier(), table_id_, count_stats.entity_id);
         if (ret != KStatus::SUCCESS) {
-          LOG_ERROR("AddRecalcEntity partition[%s] table[%lu} entity[%lu] failed.",
+          LOG_WARN("AddRecalcEntity partition[%s] table[%lu} entity[%lu] failed.",
             partition_version->GetPartitionIdentifierStr().c_str(), table_id_, count_stats.entity_id);
         }
       }
@@ -3535,8 +3535,8 @@ KStatus TsRawDataIteratorImplByOSN::Next(ResultSet* res, k_uint32* count, bool* 
         break;
       }
       default:
-        LOG_ERROR("sending status cannot be this.");
-        break;
+        LOG_ERROR("sending status cannot be this. sending status is %d", cur_entity_status_);
+        return KStatus::FAIL;
     }
     if (*count > 0) {
       return KStatus::SUCCESS;

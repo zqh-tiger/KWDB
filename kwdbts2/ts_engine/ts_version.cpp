@@ -790,6 +790,32 @@ std::vector<std::shared_ptr<TsLastSegment>> TsPartitionVersion::GetCompactLastSe
   return result;
 }
 
+std::vector<std::shared_ptr<TsLastSegment>> TsPartitionVersion::GetVacuumLastSegments(bool force_vacuum) const {
+  if (force_vacuum) {
+    return GetAllLastSegments();
+  }
+  uint32_t vacuum_interval = vacuum_minutes;
+  const char *vacuum_minutes_char = getenv("KW_VACUUM_TIME");
+  if (vacuum_minutes_char) {
+    char* endptr;
+    vacuum_interval = strtol(vacuum_minutes_char, &endptr, 10);
+    assert(*endptr == '\0');
+  }
+
+  auto now = std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now());
+  const auto &lasts = leveled_last_segments_.GetAllLastSegments();
+  std::vector<std::shared_ptr<TsLastSegment>> result;
+  for (auto& last : lasts) {
+    auto mtime = ModifyTime(last->GetFilePath());
+    float diff_latest_now = (now.time_since_epoch().count() - mtime) / 60;
+    if (diff_latest_now < vacuum_interval) {
+      continue;
+    }
+    result.push_back(last);
+  }
+  return result;
+}
+
 std::list<std::shared_ptr<TsMemSegment>> TsPartitionVersion::GetAllMemSegments() const {
   if (valid_memseg_) {
     return *valid_memseg_;
@@ -1752,7 +1778,7 @@ KStatus TsVersionManager::RecordReader::ReadRecord(std::string *record, bool *eo
     tmp += static_cast<uint8_t>(result.data()[i]);
   }
   if (checksum != tmp) {
-    LOG_ERROR("Checksum mismatch, expect %u, actual %u, ignore following records", checksum, tmp);
+    LOG_WARN("Checksum mismatch, expect %u, actual %u, ignore following records", checksum, tmp);
     *eof = true;
     return SUCCESS;
   }

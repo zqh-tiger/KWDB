@@ -71,12 +71,12 @@ class TsEntitySegmentTest : public ::testing::Test {
     if (!pool.IsStop()) {
       pool.Stop();
     }
-#ifdef WITH_TESTS
     KWDBDynamicThreadPool::Destroy();
-#endif
   }
 
-  TsEntitySegmentTest() { EngineOptions::mem_segment_max_size = INT32_MAX; }
+  TsEntitySegmentTest() {
+    EngineOptions::mem_segment_max_size = INT32_MAX;
+  }
 
   ~TsEntitySegmentTest() override = default;
 
@@ -337,7 +337,7 @@ TEST_F(TsEntitySegmentTest, simpleInsertExtraLargeBlockCache) {
 }
 
 TEST_F(TsEntitySegmentTest, simpleInsertDoubleCompact) {
-  EngineOptions::g_dedup_rule = DedupRule::KEEP;
+  EngineOptions::g_dedup_rule = DedupRule::KEEP_EXPERIMENTAL;
   EngineOptions::max_compact_num = 20;
   EngineOptions::max_rows_per_block = 20000;
   EngineOptions::min_rows_per_block = 20000;
@@ -703,7 +703,7 @@ TEST_F(TsEntitySegmentTest, TestEntityMinMaxRowNum) {
 }
 
 TEST_F(TsEntitySegmentTest, simpleCount) {
-  EngineOptions::g_dedup_rule = DedupRule::KEEP;
+  EngineOptions::g_dedup_rule = DedupRule::KEEP_EXPERIMENTAL;
   EngineOptions::max_compact_num = 20;
   EngineOptions::max_rows_per_block = 1000;
   EngineOptions::min_rows_per_block = 1000;
