@@ -10,6 +10,7 @@
 // See the Mulan PSL v2 for more details.
 #pragma once
 
+#include <algorithm>
 #include <cstdint>
 #include <list>
 #include <map>
@@ -50,7 +51,10 @@ struct TsEntitySegmentBlockItem {
   uint64_t agg_offset = 0;
   uint32_t agg_len = 0;
   uint32_t block_version = INVALID_BLOCK_VERSION;
-  char reserved[16] = {0};  // reserved for user-defined information.
+  uint8_t source = TsDataSource::None;
+  char reserved_1[3] = {0};
+  uint32_t table_id = 0;
+  char reserved_2[8] = {0};  // reserved for user-defined information.
 };
 static_assert(sizeof(TsEntitySegmentBlockItem) == 128,
               "wrong size of TsEntitySegmentBlockItem, please check compatibility.");
@@ -222,11 +226,20 @@ struct TsEntitySegmentBlockInfo {
   TsSliceGuard col_agg_offset{};
 };
 
+#define COLUMN_BLOCK_BUFFER_READY   1
+#define COLUMN_BLOCK_AGG_READY      2
+
 struct TsEntitySegmentColumnBlock {
   std::unique_ptr<TsBitmapBase> bitmap;
   TsSliceGuard buffer;
   TsSliceGuard agg;
   std::vector<std::string> var_rows;
+
+  /***
+   * first bit of ready_flag indicates buffer readiness, 1: ready, 0: not ready.
+   * second bit of ready_flag indicates agg readiness, 1: ready, 0: not ready.
+   */
+  std::atomic<uint8_t> ready_flag{0};
 };
 
 class TsSegmentBlockContainer;
@@ -309,7 +322,7 @@ class TsEntityBlock : public TsBlock {
 
   inline bool HasAggDataNoLock(int32_t col_idx) {
     return column_blocks_.size() > col_idx + 1 && column_blocks_[col_idx + 1] != nullptr
-            && !column_blocks_[col_idx + 1]->agg.empty();
+            && (column_blocks_[col_idx + 1]->ready_flag & COLUMN_BLOCK_AGG_READY);
   }
 
   inline bool HasAggData(int32_t col_idx) {
@@ -319,7 +332,7 @@ class TsEntityBlock : public TsBlock {
   inline bool HasDataCachedNoLock(int32_t col_idx) {
     assert(col_idx >= -1);
     return column_blocks_.size() > col_idx + 1 && column_blocks_[col_idx + 1] != nullptr
-            && !column_blocks_[col_idx + 1]->buffer.empty();
+            && (column_blocks_[col_idx + 1]->ready_flag & COLUMN_BLOCK_BUFFER_READY);
   }
 
   inline bool HasDataCached(int32_t col_idx) {
@@ -360,6 +373,10 @@ class TsEntityBlock : public TsBlock {
   timestamp64 GetLastTS() override;
 
   void GetMinAndMaxOSN(uint64_t& min_osn, uint64_t& max_osn) override;
+
+  void GetMinAndMaxOSN(int start_row, int row_num, uint64_t& min_osn, uint64_t& max_osn) override;
+
+  uint64_t GetOSN(int row_num) override;
 
   uint64_t GetFirstOSN() override;
 
@@ -427,6 +444,19 @@ class TsSegmentFile {
   }
 
   uint64_t GetEntityNum() { return meta_mgr_.GetEntityNum(); }
+
+  KStatus GetMaxOSN(TSEntityID entity_id, TS_OSN& max_osn) {
+    max_osn = 0;
+    std::vector<TsEntitySegmentBlockItemWithData> blk_items;
+    KStatus s = meta_mgr_.GetAllBlockItems(entity_id, &blk_items);
+    if (s != KStatus::SUCCESS) {
+      return s;
+    }
+    for (auto& blk_item : blk_items) {
+      max_osn = std::max(max_osn, blk_item.block_item->max_osn);
+    }
+    return KStatus::SUCCESS;
+  }
 
   KStatus GetAllBlockItems(TSEntityID entity_id, std::vector<TsEntitySegmentBlockItemWithData>* blk_items) {
     return meta_mgr_.GetAllBlockItems(entity_id, blk_items);
@@ -502,6 +532,10 @@ class TsEntitySegment : public TsSegmentBase, public enable_shared_from_this<TsE
   }
 
   uint64_t GetEntityNum() { return segment_file_->GetEntityNum(); }
+
+  KStatus GetMaxOSN(TSEntityID entity_id, TS_OSN& max_osn) {
+    return segment_file_->GetMaxOSN(entity_id, max_osn);
+  }
 
   std::shared_ptr<TsSegmentBlockContainer>& GetSegmentBlockContainer() {
     return segment_block_container_;

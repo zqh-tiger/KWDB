@@ -51,8 +51,9 @@ KStatus TsEntitySegmentEntityItemFile::Open() {
   header_ = reinterpret_cast<TsEntityItemFileHeader*>(header_guard_.data());
   if (header_->status != TsFileStatus::READY) {
     LOG_ERROR("TsEntitySegmentEntityItemFile not ready, file_path=%s", file_path_.c_str())
+    return KStatus::FAIL;
   }
-  return s;
+  return KStatus::SUCCESS;
 }
 KStatus TsEntitySegmentEntityItemFile::SetEntityItemDropped(uint64_t entity_id) {
   // todo(liangbo01) readonly_file ,cannot modify.
@@ -113,6 +114,7 @@ KStatus TsEntitySegmentBlockItemFile::Open() {
   header_ = reinterpret_cast<TsBlockItemFileHeader*>(header_guard_.data());
   if (header_->status != TsFileStatus::READY) {
     LOG_ERROR("TsEntitySegmentBlockItemFile not ready, file_path=%s", file_path_.c_str())
+    return KStatus::FAIL;
   }
   return s;
 }
@@ -459,6 +461,7 @@ KStatus TsEntityBlock::LoadColData(int32_t col_idx, const std::vector<AttributeI
     assert(*reinterpret_cast<uint32_t*>(var_offsets.data() + var_offsets.size() - sizeof(uint32_t)) == var_data.size());
   }
   TsLRUBlockCache::GetInstance().AddMemory(this, bitmap_len + column_blocks_[col_idx + 1]->buffer.size());
+  column_blocks_[col_idx + 1]->ready_flag.fetch_or(COLUMN_BLOCK_BUFFER_READY);
 #ifdef WITH_TESTS
   if (TsLRUBlockCache::GetInstance().unit_test_enabled &&
       TsLRUBlockCache::GetInstance().unit_test_phase == TsLRUBlockCache::UNIT_TEST_PHASE::COLUMN_BLOCK_CRASH_PHASE_NONE) {
@@ -481,6 +484,7 @@ KStatus TsEntityBlock::LoadAggData(int32_t col_idx, TsSliceGuard&& buffer) {
   if (buffer_len > 0) {
     column_blocks_[col_idx + 1]->agg = std::move(buffer);
     TsLRUBlockCache::GetInstance().AddMemory(this, buffer_len);
+    column_blocks_[col_idx + 1]->ready_flag.fetch_or(COLUMN_BLOCK_AGG_READY);
   }
   return KStatus::SUCCESS;
 }
@@ -650,6 +654,29 @@ inline timestamp64 TsEntityBlock::GetLastTS() {
 inline void TsEntityBlock::GetMinAndMaxOSN(uint64_t& min_osn, uint64_t& max_osn) {
   min_osn = min_osn_;
   max_osn = max_osn_;
+}
+
+inline void TsEntityBlock::GetMinAndMaxOSN(int start_row, int row_num, uint64_t& min_osn, uint64_t& max_osn) {
+    const uint64_t* osn = GetOSNAddr(start_row);
+    for (int i = 0; i < row_num; i++) {
+      if (*(osn + i) < min_osn) {
+        min_osn = *(osn + i);
+      }
+      if (*(osn + i) > max_osn) {
+        max_osn = *(osn + i);
+      }
+    }
+}
+
+inline uint64_t TsEntityBlock::GetOSN(int row_num) {
+  if (!HasDataCached(-1)) {
+    KStatus s = segment_block_container_->GetColumnBlock(-1, {}, this, nullptr);
+    if (s != KStatus::SUCCESS) {
+      LOG_ERROR("block segment column[osn] data load failed");
+      return 0;
+    }
+  }
+  return *(reinterpret_cast<const uint64_t*>(column_blocks_[0]->buffer.data() + row_num * sizeof(uint64_t)));
 }
 
 inline uint64_t TsEntityBlock::GetFirstOSN() {

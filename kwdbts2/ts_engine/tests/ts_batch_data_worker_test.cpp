@@ -11,6 +11,7 @@
 
 #include <unistd.h>
 
+#include "ts_test_base.h"
 #include "libkwdbts2.h"
 #include "me_metadata.pb.h"
 #include "sys_utils.h"
@@ -21,40 +22,12 @@
 using namespace kwdbts;  // NOLINT
 
 const string engine_root_path = "./tsdb";
-class TsBatchDataWorkerTest : public ::testing::Test {
-public:
-  EngineOptions opts_;
-  TSEngineImpl *engine_;
-  kwdbContext_t g_ctx_;
-  kwdbContext_p ctx_;
-
-  virtual void SetUp() override {
-    ctx_ = &g_ctx_;
-    InitKWDBContext(ctx_);
-    KWDBDynamicThreadPool::GetThreadPool().Init(8, ctx_);
-  }
-
-  virtual void TearDown() override {
-    KWDBDynamicThreadPool::GetThreadPool().Stop();
-  }
-
-public:
+class TsBatchDataWorkerTest : public TsEngineTestBase {
+ public:
   TsBatchDataWorkerTest() {
-    ctx_ = &g_ctx_;
-    InitKWDBContext(ctx_);
-    opts_.db_path = engine_root_path;
-    Remove(engine_root_path);
-    MakeDirectory(engine_root_path);
     EngineOptions::vgroup_max_num = 1;
-    engine_ = new TSEngineImpl(opts_);
-    auto s = engine_->Init(ctx_);
-    EXPECT_EQ(s, KStatus::SUCCESS);
-  }
-
-  ~TsBatchDataWorkerTest() {
-    if (engine_) {
-      delete engine_;
-    }
+    InitContext();
+    InitEngine(engine_root_path);
   }
 };
 
@@ -120,11 +93,11 @@ TEST_F(TsBatchDataWorkerTest, TestTsBatchDataWorker) {
   data.data = backup_data.data();
   data.len = backup_data.size();
   // first write
-  s = engine_->WriteBatchData(ctx_, table_id, 1, write_job_id, &data, &n_rows, is_dropped);
+  s = engine_->WriteBatchData(ctx_, table_id, 1, write_job_id, &data, &n_rows, TsDataSource::Restore, is_dropped);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(n_rows, row_num);
   // second write
-  s = engine_->WriteBatchData(ctx_, table_id, 1, write_job_id, &data, &n_rows, is_dropped);
+  s = engine_->WriteBatchData(ctx_, table_id, 1, write_job_id, &data, &n_rows, TsDataSource::Restore, is_dropped);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(n_rows, row_num);
   //  finish
@@ -264,7 +237,7 @@ TEST_F(TsBatchDataWorkerTest, LoseData) {
   uint64_t write_job_id = 3;
   data.data = backup_data2.data();
   data.len = backup_data2.size();
-  s = engine_->WriteBatchData(ctx_, table_id, 1, write_job_id, &data, &n_rows, is_dropped);
+  s = engine_->WriteBatchData(ctx_, table_id, 1, write_job_id, &data, &n_rows, TsDataSource::Restore, is_dropped);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(n_rows, 1000);
   //  finish
@@ -274,7 +247,7 @@ TEST_F(TsBatchDataWorkerTest, LoseData) {
   write_job_id = 4;
   data.data = backup_data1.data();
   data.len = backup_data1.size();
-  s = engine_->WriteBatchData(ctx_, table_id, 1, write_job_id, &data, &n_rows, is_dropped);
+  s = engine_->WriteBatchData(ctx_, table_id, 1, write_job_id, &data, &n_rows, TsDataSource::Restore, is_dropped);
   ASSERT_EQ(s, KStatus::SUCCESS);
   ASSERT_EQ(n_rows, 1000);
   //  finish
@@ -386,4 +359,59 @@ TEST_F(TsBatchDataWorkerTest, LoseData) {
     }
     block_spans.pop_front();
   }
+}
+
+TEST_F(TsBatchDataWorkerTest, NoMetricData) {
+  TSTableID table_id = 10032;
+  roachpb::CreateTsTable pb_meta;
+  using namespace roachpb;
+  std::vector<DataType> metric_type{roachpb::TIMESTAMP, roachpb::INT, roachpb::DOUBLE,
+                                    roachpb::VARCHAR};
+  ConstructRoachpbTableWithTypes(&pb_meta, table_id, metric_type);
+  // ConstructRoachpbTable(&pb_meta, table_id);
+  std::shared_ptr<TsTable> ts_table;
+  auto s = engine_->CreateTsTable(ctx_, table_id, &pb_meta, ts_table);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+
+  std::shared_ptr<TsTableSchemaManager> schema_mgr;
+  bool is_dropped = false;
+  s = engine_->GetTableSchemaMgr(ctx_, table_id, is_dropped, schema_mgr);
+  ASSERT_EQ(s , KStatus::SUCCESS);
+
+  const std::vector<AttributeInfo>* metric_schema{nullptr};
+  s = schema_mgr->GetMetricMeta(1, &metric_schema);
+  ASSERT_EQ(s , KStatus::SUCCESS);
+  std::vector<TagInfo> tag_schema;
+  s = schema_mgr->GetTagMeta(1, tag_schema);
+  ASSERT_EQ(s , KStatus::SUCCESS);
+  ASSERT_EQ(metric_schema->size(), metric_type.size());
+  timestamp64 start_ts = 10086000;
+
+  // entity 1, no metric data
+  auto pay_load = GenRowPayload(*metric_schema, tag_schema ,table_id, 1, 1, 0, start_ts);
+  uint16_t inc_entity_cnt;
+  uint32_t inc_unordered_cnt = 0;
+  DedupResult dedup_result{0, 0, 0, TSSlice {nullptr, 0}};
+  s = engine_->PutData(ctx_, table_id, 0, &pay_load, 1, 0, &inc_entity_cnt, nullptr, &dedup_result);
+  free(pay_load.data);
+
+  // entity 2
+  pay_load = GenRowPayload(*metric_schema, tag_schema ,table_id, 1, 1000, 1000, start_ts);
+  dedup_result = {0, 0, 0, TSSlice {nullptr, 0}};
+  s = engine_->PutData(ctx_, table_id, 0, &pay_load, 1, 0, &inc_entity_cnt, nullptr, &dedup_result);
+  free(pay_load.data);
+
+  uint64_t read_job_id = 1;
+  TSSlice data;
+  uint32_t row_num;
+  s = engine_->ReadBatchData(ctx_, table_id, 1, 0, UINT32_MAX, {INT64_MIN, INT64_MAX}, read_job_id, &data, &row_num, is_dropped);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  std::string backup_data1 = std::string(data.data, data.len);
+  // read batch job [entity 1]
+  TSSlice data1;
+  s = engine_->ReadBatchData(ctx_, table_id, 1, 0, UINT32_MAX, {INT64_MIN, INT64_MAX}, read_job_id, &data1, &row_num, is_dropped);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  std::string backup_data2 = std::string(data1.data, data1.len);
+  s = engine_->BatchJobFinish(ctx_, read_job_id);
+  ASSERT_EQ(s, KStatus::SUCCESS);
 }

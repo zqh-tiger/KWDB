@@ -110,7 +110,7 @@ struct TSEngine {
    * @return KStatus
    */
   virtual KStatus GetTsTable(kwdbContext_p ctx, const KTableKey& table_id, std::shared_ptr<TsTable>& ts_table,
-                             bool& is_dropped, bool create_if_not_exist = true, ErrorInfo& err_info = getDummyErrorInfo(),
+                             bool& is_dropped, bool create_if_not_exist = true,
                              uint32_t version = 0) = 0;
 
 
@@ -302,7 +302,8 @@ struct TSEngine {
     * @return KStatus
     */
   virtual KStatus CreateSnapshotForRead(kwdbContext_p ctx, const KTableKey& table_id,
-    uint64_t begin_hash, uint64_t end_hash, const KwTsSpan& ts_span, uint64_t* snapshot_id, bool& is_dropped) {
+    uint64_t begin_hash, uint64_t end_hash, const KwTsSpan& ts_span, TS_OSN scan_osn,
+    uint64_t* snapshot_id, bool& is_dropped) {
     return KStatus::FAIL;
   }
 
@@ -383,7 +384,7 @@ struct TSEngine {
   }
 
   virtual KStatus WriteBatchData(kwdbContext_p ctx, TSTableID table_id, uint64_t table_version, uint64_t job_id,
-                                 TSSlice* data, uint32_t* row_num, bool& is_dropped) {
+                                 TSSlice* data, uint32_t* row_num, TsDataSource source, bool& is_dropped) {
     return FAIL;
   }
 

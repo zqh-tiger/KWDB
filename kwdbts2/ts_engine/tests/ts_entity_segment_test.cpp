@@ -26,7 +26,6 @@
 #include "sys_utils.h"
 #include "test_util.h"
 #include "ts_block.h"
-#include "ts_drop_manager.h"
 #include "ts_entity_segment_builder.h"
 #include "ts_entity_segment_data.h"
 #include "ts_filename.h"
@@ -63,9 +62,23 @@ class TsEntitySegmentTest : public ::testing::Test {
   void SimpleInsert();
 
  public:
-  TsEntitySegmentTest() { EngineOptions::mem_segment_max_size = INT32_MAX; }
+  static void SetUpTestCase() {
+    KWDBDynamicThreadPool::GetThreadPool().InitImplicitly();
+  }
 
-  ~TsEntitySegmentTest() { KWDBDynamicThreadPool::GetThreadPool().Stop(); }
+  static void TearDownTestCase() {
+    auto& pool = KWDBDynamicThreadPool::GetThreadPool();
+    if (!pool.IsStop()) {
+      pool.Stop();
+    }
+    KWDBDynamicThreadPool::Destroy();
+  }
+
+  TsEntitySegmentTest() {
+    EngineOptions::mem_segment_max_size = INT32_MAX;
+  }
+
+  ~TsEntitySegmentTest() override = default;
 
   void SetUp() override {
     System("rm -rf schema");
@@ -324,7 +337,7 @@ TEST_F(TsEntitySegmentTest, simpleInsertExtraLargeBlockCache) {
 }
 
 TEST_F(TsEntitySegmentTest, simpleInsertDoubleCompact) {
-  EngineOptions::g_dedup_rule = DedupRule::KEEP;
+  EngineOptions::g_dedup_rule = DedupRule::KEEP_EXPERIMENTAL;
   EngineOptions::max_compact_num = 20;
   EngineOptions::max_rows_per_block = 20000;
   EngineOptions::min_rows_per_block = 20000;
@@ -690,7 +703,7 @@ TEST_F(TsEntitySegmentTest, TestEntityMinMaxRowNum) {
 }
 
 TEST_F(TsEntitySegmentTest, simpleCount) {
-  EngineOptions::g_dedup_rule = DedupRule::KEEP;
+  EngineOptions::g_dedup_rule = DedupRule::KEEP_EXPERIMENTAL;
   EngineOptions::max_compact_num = 20;
   EngineOptions::max_rows_per_block = 1000;
   EngineOptions::min_rows_per_block = 1000;
@@ -1196,15 +1209,18 @@ TEST_F(TsEntitySegmentTest, BUG_IEOYSN) {
   std::shared_ptr<TsTableSchemaManager> table_schema;
   ASSERT_EQ(mgr->GetTableSchemaMgr(table_id, table_schema), SUCCESS);
 
+  std::vector<std::shared_ptr<TsMemSegment>> mem_segments;
+
   for (int k = 0; k < 10; ++k) {
-    uint64_t dev_id = 100 + k;
+    uint64_t dev_id = 100 + k / 2;
     auto payload = GenRowPayload(*metric_schema, tag_schema, table_id, 1, dev_id, 1000, 123 + k * 1000, 1);
     TsRawPayloadRowParser parser{metric_schema};
     TsRawPayload p{metric_schema};
     p.ParsePayLoadStruct(payload);
     // auto ptag = p.GetPrimaryTag();
-    mem_mgr.PutData(payload, table_schema, k);
+    mem_mgr.PutData(payload, table_schema, dev_id);
     free(payload.data);
+    mem_segments.push_back(mem_mgr.CurrentMemSegment());
     ASSERT_EQ(vgroup->Flush(), KStatus::SUCCESS);
   }
 
@@ -1214,19 +1230,20 @@ TEST_F(TsEntitySegmentTest, BUG_IEOYSN) {
   auto partitions = current->GetAllPartitions();
   ASSERT_EQ(partitions.size(), 1);
   auto p_version = partitions.begin()->second;
-  TsEntitySegmentBuilder builder(env, tmp_path, mgr.get(), &v_mgr, p_version->GetPartitionIdentifier(), nullptr);
+  TsEntitySegmentBuilder builder(env, tmp_path, mgr.get(), &v_mgr, p_version->GetPartitionIdentifier(), nullptr, TsDataSource::Flush);
   ASSERT_EQ(builder.Open(), SUCCESS);
 
-  auto memseg = mem_mgr.CurrentMemSegment();
-  std::list<std::shared_ptr<TsBlockSpan>> block_spans;
-  ASSERT_EQ(memseg->GetBlockSpans(block_spans, mgr.get()), SUCCESS);
-  ASSERT_EQ(block_spans.size(), 10);
+  for (const auto &m : mem_segments) {
+    std::list<std::shared_ptr<TsBlockSpan>> block_spans;
+    ASSERT_EQ(m->GetBlockSpans(block_spans, mgr.get()), SUCCESS);
+    ASSERT_EQ(block_spans.size(), 5);
 
-  for (auto span : block_spans) {
-    builder.PutBlockSpan(std::move(span));
+    for (auto span : block_spans) {
+      builder.PutBlockSpan(std::move(span));
+    }
   }
 
-  ASSERT_EQ(mgr->DropTableSchemaMgr(table_id), SUCCESS);
+  ASSERT_EQ(mgr->SetTableDropped(table_id), SUCCESS);
 
   TsVersionUpdate update;
   std::vector<std::shared_ptr<TsBlockSpan>> residual;

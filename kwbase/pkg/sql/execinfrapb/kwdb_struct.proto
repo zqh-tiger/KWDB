@@ -60,8 +60,8 @@ enum TSTableReadMode {
 message TSBlockFilter {
   // filter type
   enum type {
-    T_SPAN = 0;  // span
-    T_NULL = 1;  // is null
+    T_SPAN = 0; // span
+    T_NULL = 1; // is null
     T_NOTNULL = 2; // is not null
   }
   // filter span
@@ -69,16 +69,46 @@ message TSBlockFilter {
     // Boundary type
     enum SpanBoundary {
       IncludeBoundary = 0; // include
-      ExcludeBoundary= 1;  // exclude
+      ExcludeBoundary= 1; // exclude
     }
     optional string start = 1; // left value
     optional string end = 2;  // right value
     optional SpanBoundary startBoundary= 3; // left boundary type
     optional SpanBoundary endBoundary= 4; // right boundary type
   }
-  required uint32 colID = 1;   // column id
+  required uint32 colID = 1; // column id
   required type filterType = 2; // filter type
   repeated Span columnSpan = 3; // multi filter spans
+}
+
+message TSFill {
+  enum TSFillType {
+    // default.
+    DefaultFillType = 0;
+    // Exact
+    ExactFill = 1;
+
+    // Previous
+    PreviousFill = 2;
+    // Next
+    NextFill = 3;
+    // Closer
+    CloserFill = 4;
+    // Linear
+    LinearFill = 5;
+
+    // Constant
+    ConstantFill = 6;
+  }
+  optional TSFillType fillType = 1  [(gogoproto.nullable) = false];   // fill type
+  optional uint32 beforeRange = 2  [(gogoproto.nullable) = false]; // before range
+  optional uint32 afterRange = 3  [(gogoproto.nullable) = false]; // after range
+  optional string constValue = 4  [(gogoproto.nullable) = false]; // constant value
+  optional int32 dataType = 5  [(gogoproto.nullable) = false]; // constant type
+  optional int64 constWidh = 6  [(gogoproto.nullable) = false]; // length of char, varchar and varbytes
+  optional int64 nConstWidh = 7  [(gogoproto.nullable) = false]; // length of nchar and nvarchar
+  optional int64 constIntValue = 8 [(gogoproto.nullable) = false]; // int value
+  optional bool intValueFlag = 9 [(gogoproto.nullable) = false]; // If intValueFlag is true, then constIntValue is valid
 }
 
 // TSReaderSpec table reader
@@ -104,6 +134,7 @@ message TSReaderSpec {
   required int32 TsTablereaderId = 11 [(gogoproto.nullable) = false];
   required bool OrderedScan = 12 [(gogoproto.nullable) = false];
   repeated TSBlockFilter blockFilter = 13;
+  optional TSFill tsFill = 14;
 }
 
 // StatisticTSTableReader operator
@@ -182,6 +213,7 @@ message TSTagReaderSpec {
     repeated TagValueArray TagValues = 1[(gogoproto.nullable) = false];
   }
   repeated TagIndexInfo TagIndexes = 13 [(gogoproto.nullable) = false];
+  optional uint64 osnID = 14 [(gogoproto.nullable) = false];
 }
 
 enum SketchMethod {

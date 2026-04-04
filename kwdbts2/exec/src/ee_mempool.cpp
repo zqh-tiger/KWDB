@@ -74,7 +74,7 @@ k_char *EE_MemPoolMalloc(kwdbts::EE_PoolInfoDataPtr pstPoolMsg, k_size_t iMalloc
   if (pstTemPtr == nullptr) {
     return nullptr;
   }
-  if (iMallocLen > ROW_BUFFER_SIZE) {
+  if (iMallocLen > pstTemPtr->iBlockSize) {
     data = KNEW char[iMallocLen];
     // LOG_INFO("malloc non-anticipatory address: %p, iMallocLen: %ld\n", data, iMallocLen);
     return data;
@@ -84,7 +84,6 @@ k_char *EE_MemPoolMalloc(kwdbts::EE_PoolInfoDataPtr pstPoolMsg, k_size_t iMalloc
   if (pstTemPtr->iNumOfFreeBlock > 0) {
     data = pstTemPtr->data_ + (k_uint64)pstTemPtr->iBlockSize * (k_uint64)(pstTemPtr->iFreeList[pstTemPtr->iDataIndex]);
     pstTemPtr->iDataIndex++;
-    pstTemPtr->iDataIndex = pstTemPtr->iDataIndex % pstPoolMsg->iNumOfSumBlock;
     pstTemPtr->iNumOfFreeBlock--;
   } else {
     // LOG_ERROR("buffer pool malloc failed, malloc out of memory iMallocLen: %ld\n", iMallocLen);
@@ -119,9 +118,9 @@ kwdbts::KStatus EE_MemPoolFree(kwdbts::EE_PoolInfoDataPtr pstPoolMsg, k_char *da
     return kwdbts::FAIL;
   }
 
-  memset(data, 0, pstTemPtr->iBlockSize);
   std::lock_guard<std::mutex> lock(pstTemPtr->lock_);
-  pstTemPtr->iFreeList[(pstTemPtr->iDataIndex + pstTemPtr->iNumOfFreeBlock) % pstTemPtr->iNumOfSumBlock] = iOffset;
+  pstTemPtr->iDataIndex--;
+  pstTemPtr->iFreeList[pstTemPtr->iDataIndex] = iOffset;
   pstTemPtr->iNumOfFreeBlock++;
   return kwdbts::SUCCESS;
 }

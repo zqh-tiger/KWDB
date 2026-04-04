@@ -71,6 +71,7 @@ KStatus TsLastSegment::TsLastSegBlockCache::BlockIndexCache::GetBlockIndices(
   auto s = lastseg_->GetAllBlockIndex(indices.get());
   if (s == FAIL) {
     LOG_ERROR("cannot get block index from last segment");
+    return s;
   }
   // indices is ready to use after GetAllBlockIndex.
   block_indices_ = std::move(indices);
@@ -95,11 +96,13 @@ KStatus TsLastSegment::TsLastSegBlockCache::BlockInfoCache::GetBlockInfo(int blo
   auto s = lastseg_cache_->GetBlockIndex(block_id, &index);
   if (s == FAIL) {
     LOG_ERROR("cannot load block index from last segment");
+    return s;
   }
   TsLastSegmentBlockInfoWithData tmp_info;
   s = LoadBlockInfo(lastseg_cache_->segment_->file_.get(), *index, &tmp_info);
   if (s == FAIL) {
     LOG_ERROR("cannot load block info from last segment: %s", lastseg_cache_->segment_->file_->GetFilePath().c_str());
+    return s;
   }
   block_infos_[block_id] = std::move(tmp_info);
   cache_flag_[block_id] = 1;
@@ -371,8 +374,29 @@ class TsLastBlock : public TsBlock {
     max_osn = block_index_.max_osn;
   }
 
+  inline void GetMinAndMaxOSN(int start_row, int row_num, uint64_t& min_osn, uint64_t& max_osn) {
+    const uint64_t* osn = GetOSNAddr(start_row);
+    for (int i = 0; i < row_num; i++) {
+      if (*(osn + i) < min_osn) {
+        min_osn = *(osn + i);
+      }
+      if (*(osn + i) > max_osn) {
+        max_osn = *(osn + i);
+      }
+    }
+  }
+
   inline uint64_t GetFirstOSN() override {
     return block_index_.first_osn;
+  }
+
+  inline uint64_t GetOSN(int row_num) override {
+    auto osn = GetOSN();
+    if (osn == nullptr) {
+      LOG_ERROR("cannot get osn addr");
+      return 0;
+    }
+    return osn[row_num];
   }
 
   inline uint64_t GetLastOSN() override {
@@ -540,6 +564,66 @@ KStatus TsLastSegment::Open() {
   return SUCCESS;
 }
 
+KStatus TsLastSegment::GetMaxOSN(TSEntityID entity_id, TS_OSN& max_osn) {
+  max_osn = 0;
+  std::vector<TsLastSegmentBlockIndex>* p_block_indices;
+  KStatus s = block_cache_->GetAllBlockIndex(&p_block_indices);
+  if (s != KStatus::SUCCESS) {
+    LOG_ERROR("GetAllBlockIndex failed.");
+    return s;
+  }
+
+  const std::vector<TsLastSegmentBlockIndex>& block_indices = *p_block_indices;
+  assert(block_indices.size() == footer_.n_data_block);
+
+  // find the first block which satisfies block.max_entity_id >= entity_id
+  auto begin_it = std::upper_bound(
+    block_indices.begin(), block_indices.end(), entity_id,
+    [](TSEntityID entity_id, const TsLastSegmentBlockIndex& element) { return element.max_entity_id >= entity_id; });
+  if (begin_it == block_indices.end()) {
+    return SUCCESS;
+  }
+
+  // find the first block which satisfies block.min_entity_id > entity_id
+  auto end_it = std::upper_bound(
+    block_indices.begin(), block_indices.end(), entity_id,
+    [](TSEntityID entity_id, const TsLastSegmentBlockIndex& element) { return element.min_entity_id > entity_id; });
+  if (begin_it == end_it) {
+    return SUCCESS;
+  }
+  assert(end_it > begin_it);
+
+  for (auto it = begin_it; it != end_it; ++it) {
+    assert(it->max_entity_id >= entity_id && it->min_entity_id <= entity_id);
+    //  we need to read the block to do further filtering.
+    int block_idx = it - block_indices.begin();
+
+    std::shared_ptr<TsLastBlock> block = nullptr;
+    s = this->GetBlock(block_idx, &block);
+    if (s == FAIL) {
+      return s;
+    }
+
+    const TSEntityID* entities = block->GetEntities();
+    const uint64_t* osn = block->GetOSN();
+    const TSEntityID* begin = entities;
+    const TSEntityID* end = entities + block->GetRowNum();
+    // find the first row in the block that eid >= entity_id.
+    const TSEntityID* start_entity_it = std::lower_bound(begin, end, entity_id);
+    // find the first row in the block that eid > entity_id.
+    const TSEntityID* end_entity_it = std::upper_bound(begin, end, entity_id);
+    if (start_entity_it == end_entity_it) {
+      continue;
+    }
+    size_t start_idx = start_entity_it - begin;
+    size_t end_idx = end_entity_it - begin;
+    for (size_t idx = start_idx; idx < end_idx; ++idx) {
+      max_osn = std::max(max_osn, osn[idx]);
+    }
+  }
+  return SUCCESS;
+}
+
 KStatus TsLastSegment::GetBlockSpans(std::list<shared_ptr<TsBlockSpan>>& block_spans,
                                      TsEngineSchemaManager* schema_mgr) {
   assert(block_cache_ != nullptr);
@@ -565,9 +649,10 @@ KStatus TsLastSegment::GetBlockSpans(std::list<shared_ptr<TsBlockSpan>>& block_s
     }
 
     if (tbl_schema_mgr == nullptr || tbl_schema_mgr->GetTableId() != block->GetTableId()) {
-      auto s = schema_mgr->GetTableSchemaMgr(block->GetTableId(), tbl_schema_mgr);
+      bool is_dropped = false;
+      auto s = schema_mgr->GetTableSchemaMgr(block->GetTableId(), tbl_schema_mgr, &is_dropped);
       if (s != KStatus::SUCCESS) {
-        if (tbl_schema_mgr == nullptr) {
+        if (is_dropped) {
           LOG_DEBUG("Table has already been dropped, table id:%ld", block->GetTableId());
           continue;
         }
@@ -587,8 +672,9 @@ KStatus TsLastSegment::GetBlockSpans(std::list<shared_ptr<TsBlockSpan>>& block_s
       if (scan_metric == nullptr || scan_metric->GetVersion() != block->GetTableVersion()) {
         auto s = tbl_schema_mgr->GetMetricSchema(block->GetTableVersion(), &scan_metric);
         if (s != SUCCESS) {
-          LOG_ERROR("GetMetricSchema failed. table id [%u], table version [%lu]",
-            block->GetTableVersion(), block->GetTableId());
+          LOG_ERROR("GetMetricSchema failed. table id [%lu], table version [%u]",
+            block->GetTableId(), block->GetTableVersion());
+          return s;
         }
       }
       std::shared_ptr<TsBlockSpan> cur_blk_span;

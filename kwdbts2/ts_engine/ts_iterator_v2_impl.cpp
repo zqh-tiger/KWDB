@@ -8,19 +8,20 @@
 // EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
 // MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 // See the Mulan PSL v2 for more details.
+
+#include <algorithm>
 #include <cassert>
-#include <limits>
 #include <cstring>
+#include <limits>
 #include <list>
 #include <memory>
-#include <vector>
-#include <algorithm>
 #include <string>
-#include "ts_vgroup.h"
-#include "ts_iterator_v2_impl.h"
+#include <vector>
+
 #include "engine.h"
-#include "ee_global.h"
+#include "ts_iterator_v2_impl.h"
 #include "ts_ts_lsn_span_utils.h"
+#include "ts_vgroup.h"
 
 namespace kwdbts {
 int64_t TsMaxMilliTimestamp = 31556995200000;  // be associated with 'kwbase/pkg/sql/sem/tree/type_check.go'
@@ -110,7 +111,7 @@ KStatus ConvertBlockSpanToResultSet(const std::vector<k_uint32>& kw_scan_cols, c
   return KStatus::SUCCESS;
 }
 
-TsStorageIteratorV2Impl::TsStorageIteratorV2Impl() {
+TsStorageIteratorImpl::TsStorageIteratorImpl() {
 }
 
 // https://leetcode.cn/problems/merge-intervals/description/
@@ -135,13 +136,14 @@ static std::vector<KwTsSpan> SortAndMergeSpan(const std::vector<KwTsSpan>& ts_sp
   return merged_spans;
 }
 
-TsStorageIteratorV2Impl::TsStorageIteratorV2Impl(const std::shared_ptr<TsVGroup>& vgroup, uint32_t version,
+TsStorageIteratorImpl::TsStorageIteratorImpl(const std::shared_ptr<TsVGroup>& vgroup, uint32_t version,
                                                  vector<uint32_t>& entity_ids,
                                                  std::vector<KwTsSpan>& ts_spans, std::vector<BlockFilter>& block_filter,
                                                  std::vector<k_uint32>& kw_scan_cols,
                                                  std::vector<k_uint32>& ts_scan_cols,
                                                  const std::shared_ptr<TsTableSchemaManager>& table_schema_mgr,
-                                                 const std::shared_ptr<MMapMetricsTable>& schema) {
+                                                 const std::shared_ptr<MMapMetricsTable>& schema,
+                                                 TS_OSN scan_osn) {
   vgroup_ = vgroup;
   table_version_ = version;
   entity_ids_ = entity_ids;
@@ -152,12 +154,13 @@ TsStorageIteratorV2Impl::TsStorageIteratorV2Impl(const std::shared_ptr<TsVGroup>
   kw_scan_cols_ = kw_scan_cols;
   table_schema_mgr_ = table_schema_mgr;
   scan_schema_ = schema;
+  scan_osn_ = scan_osn;
 }
 
-TsStorageIteratorV2Impl::~TsStorageIteratorV2Impl() {
+TsStorageIteratorImpl::~TsStorageIteratorImpl() {
 }
 
-KStatus TsStorageIteratorV2Impl::Init(bool is_reversed) {
+KStatus TsStorageIteratorImpl::Init(bool is_reversed) {
   is_reversed_ = is_reversed;
   attrs_ = *scan_schema_->getSchemaInfoExcludeDroppedPtr();
   table_id_ = table_schema_mgr_->GetTableId();
@@ -169,7 +172,7 @@ KStatus TsStorageIteratorV2Impl::Init(bool is_reversed) {
   return KStatus::SUCCESS;
 }
 
-inline void TsStorageIteratorV2Impl::UpdateTsSpans(timestamp64 ts) {
+inline void TsStorageIteratorImpl::UpdateTsSpans(timestamp64 ts) {
   if (ts != INVALID_TS && !ts_spans_.empty()) {
     if (!is_reversed_) {
       int i = ts_spans_.size() - 1;
@@ -197,7 +200,7 @@ inline void TsStorageIteratorV2Impl::UpdateTsSpans(timestamp64 ts) {
   }
 }
 
-void TsStorageIteratorV2Impl::SwitchEntity() {
+void TsStorageIteratorImpl::SwitchEntity() {
   if (++cur_entity_index_ < entity_ids_.size()) {
     if (TsMemSegment::IsApproachingLimit()) {
       for (auto &partition : ts_partitions_) {
@@ -207,11 +210,11 @@ void TsStorageIteratorV2Impl::SwitchEntity() {
   }
 }
 
-inline bool TsStorageIteratorV2Impl::IsFilteredOut(timestamp64 begin_ts, timestamp64 end_ts, timestamp64 ts) {
+inline bool TsStorageIteratorImpl::IsFilteredOut(timestamp64 begin_ts, timestamp64 end_ts, timestamp64 ts) {
   return  (!is_reversed_ && begin_ts > ts) || (is_reversed_ && end_ts < ts);
 }
 
-KStatus TsStorageIteratorV2Impl::getBlockSpanMinMaxValue(std::shared_ptr<TsBlockSpan>& block_span, uint32_t col_id,
+KStatus TsStorageIteratorImpl::getBlockSpanMinMaxValue(std::shared_ptr<TsBlockSpan>& block_span, uint32_t col_id,
                                                          uint32_t type, TsScanStats* ts_scan_stats,
                                                          void*& min, void*& max) {
   std::unique_ptr<TsBitmapBase> bitmap;
@@ -223,28 +226,37 @@ KStatus TsStorageIteratorV2Impl::getBlockSpanMinMaxValue(std::shared_ptr<TsBlock
   }
   uint32_t row_num = block_span->GetRowNum();
   int32_t size = block_span->GetColSize(col_id);
+  void* cur_max = nullptr;
+  void* cur_min = nullptr;
+  void* current;
+  bool need_check_bt = !bitmap->IsAllValid();
   for (int row_idx = 0; row_idx < row_num; ++row_idx) {
-    if (bitmap->At(row_idx) != DataFlags::kValid) {
+    if (need_check_bt && bitmap->At(row_idx) != DataFlags::kValid) {
       continue;
     }
-    void* current = reinterpret_cast<void*>((intptr_t)(value + row_idx * size));
-    if (min == nullptr) {
-      min = malloc(size);
-      memcpy(min, current, size);
-    } else if (cmp(min, current, type, size) > 0) {
-      memcpy(min, current, size);
+    current = reinterpret_cast<void*>((intptr_t)(value + row_idx * size));
+    if (cur_max != nullptr) {
+      auto ret = cmpWithSpan(cur_min, cur_max, current, type, size);
+      if (ret < 0) {
+        cur_min = current;
+      } else if (ret > 0) {
+        cur_max = current;
+      }
+    } else {
+      cur_max = current;
+      cur_min = current;
     }
-    if (max == nullptr) {
-      max = malloc(size);
-      memcpy(max, current, size);
-    } else if (cmp(current, max, type, size) > 0) {
-      memcpy(max, current, size);
-    }
+  }
+  if (cur_max != nullptr) {
+    min = malloc(size);
+    memcpy(min, cur_min, size);
+    max = malloc(size);
+    memcpy(max, cur_max, size);
   }
   return KStatus::SUCCESS;
 }
 
-KStatus TsStorageIteratorV2Impl::getBlockSpanVarMinMaxValue(std::shared_ptr<TsBlockSpan>& block_span,
+KStatus TsStorageIteratorImpl::getBlockSpanVarMinMaxValue(std::shared_ptr<TsBlockSpan>& block_span,
                                                             uint32_t col_id, uint32_t type,
                                                             TsScanStats* ts_scan_stats,
                                                             TSSlice& min, TSSlice& max) {
@@ -294,7 +306,7 @@ KStatus TsStorageIteratorV2Impl::getBlockSpanVarMinMaxValue(std::shared_ptr<TsBl
   return KStatus::SUCCESS;
 }
 
-KStatus TsStorageIteratorV2Impl::isBlockFiltered(std::shared_ptr<TsBlockSpan>& block_span,
+KStatus TsStorageIteratorImpl::isBlockFiltered(std::shared_ptr<TsBlockSpan>& block_span,
                                                   TsScanStats* ts_scan_stats, bool& is_filtered) {
   is_filtered = false;
   KStatus ret;
@@ -516,7 +528,7 @@ KStatus TsStorageIteratorV2Impl::isBlockFiltered(std::shared_ptr<TsBlockSpan>& b
   return KStatus::SUCCESS;
 }
 
-KStatus TsStorageIteratorV2Impl::ScanEntityBlockSpans(timestamp64 ts, TsScanStats* ts_scan_stats) {
+KStatus TsStorageIteratorImpl::ScanEntityBlockSpans(timestamp64 ts, TsScanStats* ts_scan_stats) {
   assert(ts_block_spans_.empty());
   UpdateTsSpans(ts);
   if (cur_partition_index_ < ts_partitions_.size()) {
@@ -625,7 +637,7 @@ KStatus TsStorageIteratorV2Impl::ScanEntityBlockSpans(timestamp64 ts, TsScanStat
   return KStatus::SUCCESS;
 }
 
-TsSortedRawDataIteratorV2Impl::TsSortedRawDataIteratorV2Impl(const std::shared_ptr<TsVGroup>& vgroup,
+TsSortedRawDataIteratorImpl::TsSortedRawDataIteratorImpl(const std::shared_ptr<TsVGroup>& vgroup,
                                                               uint32_t version,
                                                               vector<uint32_t>& entity_ids,
                                                               std::vector<KwTsSpan>& ts_spans,
@@ -634,17 +646,17 @@ TsSortedRawDataIteratorV2Impl::TsSortedRawDataIteratorV2Impl(const std::shared_p
                                                               std::vector<k_uint32>& ts_scan_cols,
                                                               const std::shared_ptr<TsTableSchemaManager>& table_schema_mgr,
                                                               const std::shared_ptr<MMapMetricsTable>& schema,
-                                                              SortOrder order_type) :
-                          TsStorageIteratorV2Impl::TsStorageIteratorV2Impl(vgroup, version, entity_ids, ts_spans,
+                                                              TS_OSN scan_osn, SortOrder order_type) :
+                          TsStorageIteratorImpl::TsStorageIteratorImpl(vgroup, version, entity_ids, ts_spans,
                                                                            block_filter, kw_scan_cols,
                                                                            ts_scan_cols, table_schema_mgr,
-                                                                           schema) {
+                                                                           schema, scan_osn) {
 }
 
-TsSortedRawDataIteratorV2Impl::~TsSortedRawDataIteratorV2Impl() {
+TsSortedRawDataIteratorImpl::~TsSortedRawDataIteratorImpl() {
 }
 
-NextBlockStatus TsSortedRawDataIteratorV2Impl::NextBlockSpan(timestamp64 ts, TsScanStats* ts_scan_stats) {
+NextBlockStatus TsSortedRawDataIteratorImpl::NextBlockSpan(timestamp64 ts, TsScanStats* ts_scan_stats) {
   KStatus s;
   while (true) {
     if (cur_entity_index_ >= entity_ids_.size()) {
@@ -687,7 +699,7 @@ NextBlockStatus TsSortedRawDataIteratorV2Impl::NextBlockSpan(timestamp64 ts, TsS
   }
 }
 
-KStatus TsSortedRawDataIteratorV2Impl::ScanAndSortEntityData(timestamp64 ts, TsScanStats* ts_scan_stats) {
+KStatus TsSortedRawDataIteratorImpl::ScanAndSortEntityData(timestamp64 ts, TsScanStats* ts_scan_stats) {
   if (cur_entity_index_ < entity_ids_.size()) {
     // scan row data for current entity
     KStatus ret = ScanEntityBlockSpans(ts, ts_scan_stats);
@@ -711,12 +723,12 @@ KStatus TsSortedRawDataIteratorV2Impl::ScanAndSortEntityData(timestamp64 ts, TsS
   return KStatus::SUCCESS;
 }
 
-bool TsSortedRawDataIteratorV2Impl::IsDisordered() {
+bool TsSortedRawDataIteratorImpl::IsDisordered() {
   return false;
 }
 
-KStatus TsSortedRawDataIteratorV2Impl::Init(bool is_reversed) {
-  KStatus ret = TsStorageIteratorV2Impl::Init(is_reversed);
+KStatus TsSortedRawDataIteratorImpl::Init(bool is_reversed) {
+  KStatus ret = TsStorageIteratorImpl::Init(is_reversed);
   if (ret != KStatus::SUCCESS) {
     return KStatus::FAIL;
   }
@@ -727,7 +739,7 @@ KStatus TsSortedRawDataIteratorV2Impl::Init(bool is_reversed) {
   return KStatus::SUCCESS;
 }
 
-KStatus TsSortedRawDataIteratorV2Impl::Next(ResultSet* res, k_uint32* count, bool* is_finished, timestamp64 ts,
+KStatus TsSortedRawDataIteratorImpl::Next(ResultSet* res, k_uint32* count, bool* is_finished, timestamp64 ts,
                                             TsScanStats* ts_scan_stats) {
   *count = 0;
   KStatus ret;
@@ -760,7 +772,829 @@ KStatus TsSortedRawDataIteratorV2Impl::Next(ResultSet* res, k_uint32* count, boo
   return KStatus::SUCCESS;
 }
 
-TsAggIteratorV2Impl::TsAggIteratorV2Impl(const std::shared_ptr<TsVGroup>& vgroup, uint32_t version,
+TsFillRawDataIteratorImpl::TsFillRawDataIteratorImpl(const std::shared_ptr<TsVGroup>& vgroup, uint32_t version,
+                                                     vector<uint32_t>& entity_ids, std::vector<KwTsSpan>& ts_spans,
+                                                     std::vector<BlockFilter>& block_filter,
+                                                     std::vector<k_uint32>& kw_scan_cols,
+                                                     std::vector<k_uint32>& ts_scan_cols,
+                                                     const std::shared_ptr<TsTableSchemaManager>& table_schema_mgr,
+                                                     const std::shared_ptr<MMapMetricsTable>& schema,
+                                                     const FillParams fill_params) :
+              TsSortedRawDataIteratorImpl(vgroup, version, entity_ids, ts_spans,
+                                          block_filter, kw_scan_cols,
+                                          ts_scan_cols, table_schema_mgr,
+                                          schema, UINT64_MAX),
+              fill_type_(fill_params.fill_type), varbytes_cols_(fill_params.varbytes_col_ids),
+              before_range_(fill_params.before_range), after_range_(fill_params.after_range),
+              const_fill_type_(fill_params.const_data_type), const_fill_value_(fill_params.const_data_value),
+              const_data_length_(fill_params.const_data_length), const_n_data_length_(fill_params.const_n_data_length),
+              int_value_flag_(fill_params.int_value_flag), const_int_value_(fill_params.const_int_value) {
+  assert(ts_spans_.size() == 1);
+  assert(ts_spans_.front().begin == ts_spans_.front().end);
+  fill_ts_point_ = ts_spans_.front().begin;
+  if (before_range_ != 0) {
+    before_range_ = convertMSToPrecisionTS(before_range_, ts_col_type_);
+  }
+  if (after_range_ != 0) {
+    after_range_ = convertMSToPrecisionTS(after_range_, ts_col_type_);
+  }
+}
+
+KStatus TsFillRawDataIteratorImpl::Init(bool is_reversed) {
+  if (FillType::PREVIOUS == fill_type_ || FillType::CLOSER == fill_type_ || FillType::LINEAR == fill_type_) {
+    if (before_range_ != 0) {
+      before_ts_span_ = {{fill_ts_point_ - before_range_, fill_ts_point_}};
+    } else {
+      before_ts_span_ = {{INT64_MIN, fill_ts_point_}};
+    }
+  }
+
+  if (FillType::NEXT == fill_type_ || FillType::CLOSER == fill_type_ || FillType::LINEAR == fill_type_) {
+    if (after_range_ != 0) {
+      after_ts_span_ = {{fill_ts_point_, fill_ts_point_ + after_range_}};
+    } else {
+      after_ts_span_ = {{fill_ts_point_, INT64_MAX}};
+    }
+  }
+  db_id_ = scan_schema_->metaData()->db_id;
+  table_id_ = table_schema_mgr_->GetTableId();
+  attrs_ = *scan_schema_->getSchemaInfoExcludeDroppedPtr();
+  vgroup_current_version_ = vgroup_->CurrentVersion();
+  ts_partitions_ = vgroup_current_version_->GetPartitions(db_id_, ts_spans_, ts_col_type_);
+  filter_ = std::make_shared<TsScanFilterParams>(db_id_, table_id_, vgroup_->GetVGroupID(),
+                                                 0, ts_col_type_, scan_osn_, ts_spans_);
+  switchEntity();
+  return KStatus::SUCCESS;
+}
+
+bool TsFillRawDataIteratorImpl::IsDisordered() {
+  return false;
+}
+
+void TsFillRawDataIteratorImpl::switchEntity() {
+  if (++cur_entity_index_ < entity_ids_.size()) {
+    cur_entity_id_ = entity_ids_[cur_entity_index_];
+    if (TsMemSegment::IsApproachingLimit()) {
+      for (auto &partition : ts_partitions_) {
+        partition = vgroup_->GetCurrentPartitionVersion(partition->GetPartitionIdentifier());
+      }
+    }
+    fill_kw_scan_cols_.clear();
+    fill_ts_scan_cols_.clear();
+    fill_cols_map_.clear();
+  }
+}
+
+bool TsFillRawDataIteratorImpl::isConstFillTypeIllegal(uint32_t col_idx) {
+    DATATYPE col_type = (DATATYPE) attrs_[col_idx].type;
+    switch (const_fill_type_) {
+    case DATATYPE::NO_TYPE: {
+      return true;
+    }
+    case DATATYPE::BOOL:
+    case DATATYPE::BYTE: {
+      if (col_type == DATATYPE::INT8 || col_type == DATATYPE::INT16 || col_type == DATATYPE::INT32 ||
+          col_type == DATATYPE::INT64 || col_type == DATATYPE::FLOAT || col_type == DATATYPE::DOUBLE ||
+          col_type == DATATYPE::TIMESTAMP || col_type == DATATYPE::TIMESTAMP64 ||
+          col_type == DATATYPE::TIMESTAMP64_MICRO || col_type == DATATYPE::TIMESTAMP64_NANO) {
+        return true;
+      }
+      break;
+    }
+    case DATATYPE::INT16: {
+      if (col_type == DATATYPE::BOOL || col_type == DATATYPE::BYTE || col_type == DATATYPE::INT8) {
+        return true;
+      }
+      break;
+    }
+    case DATATYPE::INT32: {
+      if (col_type == DATATYPE::BOOL || col_type == DATATYPE::BYTE ||
+          col_type == DATATYPE::INT8 || col_type == DATATYPE::INT16) {
+        return true;
+      }
+      break;
+    }
+    case DATATYPE::INT64: {
+      if (col_type == DATATYPE::BOOL || col_type == DATATYPE::BYTE ||
+          col_type == DATATYPE::INT8 || col_type == DATATYPE::INT16 || col_type == DATATYPE::INT32 ||
+          col_type == DATATYPE::TIMESTAMP) {
+        return true;
+      }
+      break;
+    }
+    case DATATYPE::FLOAT: {
+      if (col_type == DATATYPE::BOOL || col_type == DATATYPE::BYTE || col_type == DATATYPE::INT8 ||
+          col_type == DATATYPE::INT16 || col_type == DATATYPE::INT32 || col_type == DATATYPE::INT64 ||
+          col_type == DATATYPE::TIMESTAMP || col_type == DATATYPE::TIMESTAMP64 ||
+          col_type == DATATYPE::TIMESTAMP64_MICRO || col_type == DATATYPE::TIMESTAMP64_NANO) {
+        return true;
+      }
+      break;
+    }
+    case DATATYPE::DOUBLE: {
+      if (col_type == DATATYPE::BOOL || col_type == DATATYPE::BYTE || col_type == DATATYPE::INT8 ||
+          col_type == DATATYPE::INT16 || col_type == DATATYPE::INT32 || col_type == DATATYPE::INT64 ||
+          col_type == DATATYPE::TIMESTAMP || col_type == DATATYPE::TIMESTAMP64 ||
+          col_type == DATATYPE::TIMESTAMP64_MICRO || col_type == DATATYPE::TIMESTAMP64_NANO ||
+          col_type == DATATYPE::FLOAT) {
+        return true;
+      }
+      break;
+    }
+    case DATATYPE::CHAR:
+    case DATATYPE::BINARY:
+    case DATATYPE::VARSTRING:
+    case DATATYPE::VARBINARY: {
+      if (col_type == DATATYPE::BOOL || col_type == DATATYPE::BYTE ||
+          col_type == DATATYPE::INT8 || col_type == DATATYPE::INT16 || col_type == DATATYPE::INT32 ||
+          col_type == DATATYPE::INT64 || col_type == DATATYPE::FLOAT || col_type == DATATYPE::DOUBLE) {
+        return true;
+      }
+      if (col_type == DATATYPE::TIMESTAMP || col_type == DATATYPE::TIMESTAMP64 ||
+          col_type == DATATYPE::TIMESTAMP64_MICRO || col_type == DATATYPE::TIMESTAMP64_NANO) {
+        return !int_value_flag_;
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  if (col_type == DATATYPE::CHAR || col_type == DATATYPE::BINARY ||
+      col_type == DATATYPE::VARSTRING || col_type == DATATYPE::VARBINARY) {
+    uint32_t col_size = attrs_[col_idx].length;
+    if (varbytes_cols_.count(col_idx)) {
+      return const_data_length_ > col_size;
+    }
+    col_size -= 1;
+    if (col_type == DATATYPE::CHAR || col_type == DATATYPE::VARSTRING) {
+      return const_data_length_ > col_size;
+    } else {
+      return const_n_data_length_ > (col_size / 4);
+    }
+  }
+  return false;
+}
+
+KStatus TsFillRawDataIteratorImpl::copyBatch(uint32_t col_idx, const Batch* old_batch, Batch** new_batch) {
+  if (old_batch->count > 0) {
+    bool is_var_type = isVarLenType(attrs_[col_idx].type);
+    int32_t alloc_size = is_var_type ? KUint16(old_batch->mem) + kStringLenLen : attrs_[col_idx].size;
+    char* value = static_cast<char*>(malloc(alloc_size));
+    if (value == nullptr) {
+      LOG_ERROR("malloc failed, cannot allocate memory, size: %u", alloc_size);
+      return KStatus::FAIL;
+    }
+    memcpy(value, old_batch->mem, alloc_size);
+    if (!is_var_type) {
+      *new_batch = new AggBatch(value, 1);
+      (*new_batch)->is_new = true;
+    } else {
+      std::shared_ptr<char> ptr(value, free);
+      *new_batch = new AggVarBatch(ptr, 1);
+    }
+  } else {
+    *new_batch = new AggBatch(nullptr, 0);
+  }
+  delete old_batch;
+  old_batch = nullptr;
+  return KStatus::SUCCESS;
+}
+
+KStatus TsFillRawDataIteratorImpl::fillColumnResultSet(ResultSet* res, uint32_t idx, const std::string& data_value) {
+  char* value = nullptr;
+  k_uint32 col_idx = fill_kw_scan_cols_[idx];
+  if (!isConstFillTypeIllegal(col_idx)) {
+    switch (attrs_[col_idx].type) {
+      case DATATYPE::BYTE:
+      case DATATYPE::BOOL: {
+        value = static_cast<char*>(malloc(sizeof(k_bool)));
+        if (value == nullptr) {
+          LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_bool));
+          return KStatus::FAIL;
+        }
+        KBool(value) = (data_value == "1") || (data_value == "true") ? 1 : 0;
+        break;
+      }
+      case DATATYPE::INT8: {
+        value = static_cast<char*>(malloc(sizeof(k_int8)));
+        if (value == nullptr) {
+          LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_int8));
+          return KStatus::FAIL;
+        }
+        try {
+          KInt8(value) = std::stoi(data_value);
+        } catch (const std::out_of_range& e) {
+          free(value);
+          value = nullptr;
+          LOG_DEBUG("cast to int8 type out of range - %s", e.what());
+        }
+        break;
+      }
+      case DATATYPE::INT16: {
+        value = static_cast<char*>(malloc(sizeof(k_int16)));
+        if (value == nullptr) {
+          LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_int16));
+          return KStatus::FAIL;
+        }
+        try {
+          KInt16(value) = std::stoi(data_value);
+        } catch (const std::out_of_range& e) {
+          free(value);
+          value = nullptr;
+          LOG_DEBUG("cast to int16 type out of range - %s", e.what());
+        }
+        break;
+      }
+      case DATATYPE::INT32: {
+        value = static_cast<char*>(malloc(sizeof(k_int32)));
+        if (value == nullptr) {
+          LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_int32));
+          return KStatus::FAIL;
+        }
+        try {
+          KInt32(value) = std::stoi(data_value);
+        } catch (const std::out_of_range& e) {
+          free(value);
+          value = nullptr;
+          LOG_DEBUG("cast to int32 type out of range - %s", e.what());
+        }
+        break;
+      }
+      case DATATYPE::TIMESTAMP: {
+        value = static_cast<char*>(malloc(sizeof(k_int32)));
+        if (value == nullptr) {
+          LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_int32));
+          return KStatus::FAIL;
+        }
+        try {
+          KInt32(value) = int_value_flag_
+                          ? convertNanoToPrecisionTS(const_int_value_, ts_col_type_)
+                          : std::stoi(data_value);
+        } catch (const std::out_of_range& e) {
+          free(value);
+          value = nullptr;
+          LOG_DEBUG("cast to int32 type out of range - %s", e.what());
+        }
+        break;
+      }
+      case DATATYPE::INT64: {
+        value = static_cast<char*>(malloc(sizeof(k_int64)));
+        if (value == nullptr) {
+          LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_int64));
+          return KStatus::FAIL;
+        }
+        try {
+          KInt64(value) = std::stoll(data_value);
+        } catch (const std::out_of_range& e) {
+          free(value);
+          value = nullptr;
+          LOG_DEBUG("cast to int64 type out of range - %s", e.what());
+        }
+        break;
+      }
+      case DATATYPE::TIMESTAMP64:
+      case DATATYPE::TIMESTAMP64_MICRO:
+      case DATATYPE::TIMESTAMP64_NANO: {
+        value = static_cast<char*>(malloc(sizeof(k_int64)));
+        if (value == nullptr) {
+          LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_int64));
+          return KStatus::FAIL;
+        }
+        try {
+          KInt64(value) = int_value_flag_
+                          ? convertNanoToPrecisionTS(const_int_value_, ts_col_type_)
+                          : std::stoll(data_value);
+        } catch (const std::out_of_range& e) {
+          free(value);
+          value = nullptr;
+          LOG_DEBUG("cast to int64 type out of range - %s", e.what());
+        }
+        break;
+      }
+      case DATATYPE::FLOAT: {
+        value = static_cast<char*>(malloc(sizeof(k_float32)));
+        if (value == nullptr) {
+          LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_float32));
+          return KStatus::FAIL;
+        }
+        try {
+          KFloat32(value) = std::stof(data_value);
+        } catch (const std::out_of_range& e) {
+          free(value);
+          value = nullptr;
+          LOG_DEBUG("cast to float type out of range - %s", e.what());
+        }
+        break;
+      }
+      case DATATYPE::DOUBLE: {
+        value = static_cast<char*>(malloc(sizeof(k_double64)));
+        if (value == nullptr) {
+          LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_double64));
+          return KStatus::FAIL;
+        }
+        try {
+          KDouble64(value) = std::stod(data_value);
+        } catch (const std::out_of_range& e) {
+          free(value);
+          value = nullptr;
+          LOG_DEBUG("cast to double type out of range - %s", e.what());
+        }
+        break;
+      }
+      case DATATYPE::BINARY:
+      case DATATYPE::CHAR:
+      case DATATYPE::STRING: {
+        size_t alloc_size = attrs_[col_idx].size;
+        value = static_cast<char*>(malloc(alloc_size));
+        if (value == nullptr) {
+          LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", alloc_size);
+          return KStatus::FAIL;
+        }
+        memset(value, 0, alloc_size);
+        memcpy(value, data_value.c_str(), data_value.length());
+        break;
+      }
+      case DATATYPE::VARBINARY: {
+        size_t data_size = data_value.length();
+        size_t alloc_size = data_size + kStringLenLen;
+        value = static_cast<char*>(malloc(alloc_size));
+        if (value == nullptr) {
+          LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", alloc_size);
+          return KStatus::FAIL;
+        }
+        KUint16(value) = data_size;
+        memcpy(value + kStringLenLen, data_value.c_str(), data_size);
+        break;
+      }
+      case DATATYPE::VARSTRING: {
+        size_t data_size = data_value.length();
+        size_t alloc_size = data_size + kStringLenLen + 1;
+        value = static_cast<char*>(malloc(alloc_size));
+        if (value == nullptr) {
+          LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", alloc_size);
+          return KStatus::FAIL;
+        }
+        KUint16(value) = data_size + 1;
+        memcpy(value + kStringLenLen, data_value.c_str(), data_size);
+        value[alloc_size - 1] = '\0';
+        break;
+      }
+      default:
+        break;
+    }
+  }
+  Batch* batch = nullptr;
+  if (nullptr == value) {
+    batch = new AggBatch(nullptr, 0);
+  } else {
+    if (!isVarLenType(attrs_[col_idx].type)) {
+      batch = new AggBatch(value, 1);
+      batch->is_new = true;
+    } else {
+      std::shared_ptr<char> ptr(value, free);
+      batch = new AggVarBatch(ptr, 1);
+    }
+  }
+  res->push_back(fill_cols_map_[idx], batch);
+  return KStatus::SUCCESS;
+}
+
+KStatus TsFillRawDataIteratorImpl::getExactFillTsPointResultSet(ResultSet* res, k_uint32* count,
+                                                                TsScanStats* ts_scan_stats) {
+  KStatus s;
+  auto partition = vgroup_current_version_->GetPartitions(db_id_, ts_spans_, ts_col_type_);
+  if (!partition.empty()) {
+    assert(partition.size() == 1);
+    auto filter = std::make_shared<TsScanFilterParams>(db_id_, table_id_, vgroup_->GetVGroupID(),
+                                                       cur_entity_id_, ts_col_type_, scan_osn_, ts_spans_);
+    s = partition.front()->GetBlockSpans(*filter, &ts_block_spans_, table_schema_mgr_, scan_schema_, ts_scan_stats);
+    if (s != KStatus::SUCCESS) {
+      LOG_ERROR("Partition GetBlockSpans failed");
+      return KStatus::FAIL;
+    }
+    if (!ts_block_spans_.empty()) {
+      // sort the block span data
+      block_span_sorted_iterator_ = std::make_shared<TsBlockSpanSortedIterator>(ts_block_spans_,
+                                                                                vgroup_->GetSchemaMgr(),
+                                                                                EngineOptions::g_dedup_rule,
+                                                                                is_reversed_);
+      s = block_span_sorted_iterator_->Init();
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("Failed to init block span sorted iterator for entity(%d).", cur_entity_id_);
+        return KStatus::FAIL;
+      }
+      bool is_done = false;
+      // TODO(liumengzhen): duplicate data
+      s = block_span_sorted_iterator_->Next(cur_block_span_, &is_done);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("NextBlockSpan failed. vgroup_id: %u, entity_id: %u",
+                  vgroup_->GetVGroupID(), cur_entity_id_);
+        return KStatus::FAIL;
+      }
+      s = ConvertBlockSpanToResultSet(kw_scan_cols_, attrs_, cur_block_span_, res, count, ts_scan_stats);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("ConvertBlockSpanToResultSet failed.");
+        return KStatus::FAIL;
+      }
+    }
+  }
+  return KStatus::SUCCESS;
+}
+
+KStatus TsFillRawDataIteratorImpl::calculateLinearResultSet(ResultSet* res, uint32_t idx,
+                                                            timestamp64 t1, timestamp64 t2,
+                                                            void* before_value, void* after_value) {
+  assert(t1 != t2);
+  char* value = nullptr;
+  k_uint32 col_idx = fill_kw_scan_cols_[idx];
+  double ratio = static_cast<double>(fill_ts_point_ - t1) / (t2 - t1);
+  switch (attrs_[col_idx].type) {
+    case DATATYPE::INT8: {
+      k_int8 v1 = KInt8(before_value), v2 = KInt8(after_value);
+      k_int8 v = static_cast<k_int8>(v1 + (v2 - v1) * ratio);
+      value = static_cast<char*>(malloc(sizeof(k_int8)));
+      if (value == nullptr) {
+        LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_int8));
+        return KStatus::FAIL;
+      }
+      KInt8(value) = v;
+      break;
+    }
+    case DATATYPE::INT16: {
+      k_int16 v1 = KInt16(before_value), v2 = KInt16(after_value);
+      k_int16 v = static_cast<k_int16>(v1 + (v2 - v1) * ratio);
+      value = static_cast<char*>(malloc(sizeof(k_int16)));
+      if (value == nullptr) {
+        LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_int16));
+        return KStatus::FAIL;
+      }
+      KInt16(value) = v;
+      break;
+    }
+    case DATATYPE::INT32:
+    case DATATYPE::TIMESTAMP: {
+      k_int32 v1 = KInt32(before_value), v2 = KInt32(after_value);
+      k_int32 v = static_cast<k_int32>(v1 + (v2 - v1) * ratio);
+      value = static_cast<char*>(malloc(sizeof(k_int32)));
+      if (value == nullptr) {
+        LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_int32));
+        return KStatus::FAIL;
+      }
+      KInt32(value) = v;
+      break;
+    }
+    case DATATYPE::INT64:
+    case DATATYPE::TIMESTAMP64:
+    case DATATYPE::TIMESTAMP64_MICRO:
+    case DATATYPE::TIMESTAMP64_NANO: {
+      k_int64 v1 = KInt64(before_value), v2 = KInt64(after_value);
+      k_int64 v = static_cast<k_int64>(v1 + (v2 - v1) * ratio);
+      value = static_cast<char*>(malloc(sizeof(k_int64)));
+      if (value == nullptr) {
+        LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_int64));
+        return KStatus::FAIL;
+      }
+      KInt64(value) = v;
+      break;
+    }
+    case DATATYPE::FLOAT: {
+      k_float32 v1 = KFloat32(before_value), v2 = KFloat32(after_value);
+      k_float32 v = v1 + (v2 - v1) * ratio;
+      value = static_cast<char*>(malloc(sizeof(k_float32)));
+      if (value == nullptr) {
+        LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_float32));
+        return KStatus::FAIL;
+      }
+      KFloat32(value) = round_to_n_decimals(v, 2);
+      break;
+    }
+    case DATATYPE::DOUBLE: {
+      k_double64 v1 = KDouble64(before_value), v2 = KDouble64(after_value);
+      k_double64 v = v1 + (v2 - v1) * ratio;
+      value = static_cast<char*>(malloc(sizeof(k_double64)));
+      if (value == nullptr) {
+        LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_double64));
+        return KStatus::FAIL;
+      }
+      KDouble64(value) = round_to_n_decimals(v, 2);
+      break;
+    }
+    default:
+      break;
+  }
+  Batch* batch = new AggBatch(value, 1);
+  batch->is_new = true;
+  res->push_back(fill_cols_map_[idx], batch);
+  return KStatus::SUCCESS;
+}
+
+KStatus TsFillRawDataIteratorImpl::Next(ResultSet* res, k_uint32* count, bool* is_finished, timestamp64 ts,
+                                        TsScanStats* ts_scan_stats) {
+  *count = 0;
+  if (cur_entity_index_ >= entity_ids_.size()) {
+    *is_finished = true;
+    return KStatus::SUCCESS;
+  }
+  KStatus s = getExactFillTsPointResultSet(res, count, ts_scan_stats);
+  if (s != KStatus::SUCCESS) {
+    LOG_ERROR("getExactFillTsPointResultSet failed.");
+    return KStatus::FAIL;
+  }
+  if (*count > 0) {
+    uint32_t null_cols = 0;
+    for (int i = 1; fill_type_ != FillType::EXACT && i < res->data.size(); ++i) {
+      const Batch* b = res->data[i][0];
+      assert(b != nullptr);
+      bool is_null = false;
+      b->isNull(0, &is_null);
+      if (is_null) {
+        fill_kw_scan_cols_.emplace_back(kw_scan_cols_[i]);
+        fill_ts_scan_cols_.emplace_back(ts_scan_cols_[i]);
+        fill_cols_map_[null_cols] = i;
+        ++null_cols;
+        delete b;
+        b = nullptr;
+        res->data[i].clear();
+      }
+    }
+    if (0 == null_cols) {
+      switchEntity();
+      return KStatus::SUCCESS;
+    }
+  } else {
+    fill_kw_scan_cols_.assign(kw_scan_cols_.begin() + 1, kw_scan_cols_.end());
+    fill_ts_scan_cols_.assign(ts_scan_cols_.begin() + 1, ts_scan_cols_.end());
+    for (int i = 0; i < fill_kw_scan_cols_.size(); ++i) {
+      fill_cols_map_[i] = i + 1;
+    }
+  }
+  *count = 1;
+  switch (fill_type_) {
+    case FillType::EXACT: {
+      for (int i = 1; i < kw_scan_cols_.size(); ++i) {
+        Batch* batch = new AggBatch(nullptr, 0);
+        res->push_back(i, batch);
+      }
+      break;
+    }
+    case FillType::PREVIOUS: {
+      std::vector<uint32_t> entity_ids = {cur_entity_id_};
+      std::vector<k_int32> agg_extend_cols;
+      uint32_t col_num = fill_kw_scan_cols_.size();
+      std::vector<Sumfunctype> scan_agg_type(col_num, Sumfunctype::LAST);
+      auto agg_iter = new TsAggIteratorImpl(vgroup_, table_version_, entity_ids, before_ts_span_, block_filter_,
+                                            fill_kw_scan_cols_, fill_ts_scan_cols_, agg_extend_cols, scan_agg_type,
+                                            {}, table_schema_mgr_, scan_schema_, UINT64_MAX);
+      s = agg_iter->Init(is_reversed_);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("AggIterator Init failed.")
+        return KStatus::FAIL;
+      }
+      ResultSet temp_res{col_num};
+      s = agg_iter->Next(&temp_res, count, is_finished, ts, ts_scan_stats);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("AggIterator Next failed.")
+        return KStatus::FAIL;
+      }
+      for (int i = 0; i < fill_kw_scan_cols_.size(); ++i) {
+        Batch* new_batch = nullptr;
+        const Batch* batch = temp_res.data[i][0];
+        s = copyBatch(fill_kw_scan_cols_[i], batch, &new_batch);
+        if (s != KStatus::SUCCESS) {
+          LOG_ERROR("copyBatch failed");
+          return KStatus::FAIL;
+        }
+        temp_res.data[i].clear();
+        res->push_back(fill_cols_map_[i], new_batch);
+      }
+      delete agg_iter;
+      agg_iter = nullptr;
+      break;
+    }
+    case FillType::NEXT: {
+      std::vector<uint32_t> entity_ids = {cur_entity_id_};
+      std::vector<k_int32> agg_extend_cols;
+      uint32_t col_num = fill_kw_scan_cols_.size();
+      std::vector<Sumfunctype> scan_agg_type(col_num, Sumfunctype::FIRST);
+      auto agg_iter = new TsAggIteratorImpl(vgroup_, table_version_, entity_ids, after_ts_span_, block_filter_,
+                                            fill_kw_scan_cols_, fill_ts_scan_cols_, agg_extend_cols, scan_agg_type,
+                                            {}, table_schema_mgr_, scan_schema_, UINT64_MAX);
+      s = agg_iter->Init(is_reversed_);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("AggIterator Init failed.")
+        return KStatus::FAIL;
+      }
+      ResultSet temp_res{col_num};
+      s = agg_iter->Next(&temp_res, count, is_finished, ts, ts_scan_stats);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("AggIterator Next failed.")
+        return KStatus::FAIL;
+      }
+      for (int i = 0; i < fill_kw_scan_cols_.size(); ++i) {
+        Batch* new_batch = nullptr;
+        const Batch* batch = temp_res.data[i][0];
+        s = copyBatch(fill_kw_scan_cols_[i], batch, &new_batch);
+        if (s != KStatus::SUCCESS) {
+          LOG_ERROR("copyBatch failed");
+          return KStatus::FAIL;
+        }
+        temp_res.data[i].clear();
+        res->push_back(fill_cols_map_[i], new_batch);
+      }
+      delete agg_iter;
+      agg_iter = nullptr;
+      break;
+    }
+    case FillType::CLOSER: {
+      std::vector<uint32_t> entity_ids = {cur_entity_id_};
+      std::vector<k_int32> agg_extend_cols;
+      uint32_t col_num = 2 * fill_kw_scan_cols_.size();
+      std::vector<k_uint32> kw_scan_cols(col_num), ts_scan_cols(col_num);
+      std::vector<Sumfunctype> previous_agg_type(col_num), after_agg_type(col_num);
+      for (int i = 0; i < fill_kw_scan_cols_.size(); ++i) {
+        previous_agg_type[2 * i] = Sumfunctype::LASTTS;
+        previous_agg_type[2 * i + 1] = Sumfunctype::LAST;
+        after_agg_type[2 * i] = Sumfunctype::FIRSTTS;
+        after_agg_type[2 * i + 1] = Sumfunctype::FIRST;
+        kw_scan_cols[2 * i] = kw_scan_cols[2 * i + 1] = fill_kw_scan_cols_[i];
+        ts_scan_cols[2 * i] = ts_scan_cols[2 * i + 1] = fill_ts_scan_cols_[i];
+      }
+
+      auto previous_agg_iter = new TsAggIteratorImpl(vgroup_, table_version_, entity_ids, before_ts_span_, block_filter_,
+                                            kw_scan_cols, ts_scan_cols, agg_extend_cols, previous_agg_type,
+                                            {}, table_schema_mgr_, scan_schema_, UINT64_MAX);
+      s = previous_agg_iter->Init(is_reversed_);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("AggIterator Init failed.")
+        return KStatus::FAIL;
+      }
+      k_uint32 previous_count = 0;
+      ResultSet previous_res{col_num};
+      s = previous_agg_iter->Next(&previous_res, &previous_count, is_finished, ts, ts_scan_stats);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("AggIterator Next failed.")
+        return KStatus::FAIL;
+      }
+
+      auto after_agg_iter = new TsAggIteratorImpl(vgroup_, table_version_, entity_ids, after_ts_span_, block_filter_,
+                                         kw_scan_cols, ts_scan_cols, agg_extend_cols, after_agg_type,
+                                          {}, table_schema_mgr_, scan_schema_, UINT64_MAX);
+      s = after_agg_iter->Init(is_reversed_);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("AggIterator Init failed.")
+        return KStatus::FAIL;
+      }
+      k_uint32 after_count = 0;
+      ResultSet after_res{col_num};
+      s = after_agg_iter->Next(&after_res, &after_count, is_finished, ts, ts_scan_stats);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("AggIterator Next failed.")
+        return KStatus::FAIL;
+      }
+
+      for (int i = 0; i < fill_kw_scan_cols_.size(); ++i) {
+        k_uint32 kw_col_idx = fill_kw_scan_cols_[i];
+        bool is_before_null = false, is_after_null = false;
+        previous_res.data[2 * i][0]->isNull(0, &is_before_null);
+        after_res.data[2 * i][0]->isNull(0, &is_after_null);
+        Batch* batch = nullptr;
+        if (is_before_null && is_after_null) {
+          batch = new AggBatch(nullptr, 0);
+        } else {
+          void* mem = nullptr;
+          char* value = nullptr;
+          if (is_before_null) {
+            mem = after_res.data[2 * i + 1][0]->mem;
+          } else if (is_after_null) {
+            mem = previous_res.data[2 * i + 1][0]->mem;
+          } else {
+            timestamp64 before_fill_ts = KTimestamp(previous_res.data[2 * i][0]->mem);
+            timestamp64 after_fill_ts = KTimestamp(after_res.data[2 * i][0]->mem);
+            timestamp64 before_interval = fill_ts_point_ - before_fill_ts;
+            timestamp64 after_interval = after_fill_ts - fill_ts_point_;
+            mem = before_interval <= after_interval
+                    ? previous_res.data[2 * i + 1][0]->mem
+                    : after_res.data[2 * i + 1][0]->mem;
+          }
+          bool is_var_type = isVarLenType(attrs_[kw_col_idx].type);
+          size_t alloc_size = is_var_type ? (KUint16(mem) + kStringLenLen) : attrs_[kw_col_idx].size;
+          value = static_cast<char*>(malloc(alloc_size));
+          if (value == nullptr) {
+            LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", alloc_size);
+            return KStatus::FAIL;
+          }
+          memcpy(value, mem, alloc_size);
+          if (!is_var_type) {
+            batch = new AggBatch(value, 1);
+            batch->is_new = true;
+          } else {
+            std::shared_ptr<char> ptr(value, free);
+            batch = new AggVarBatch(ptr, 1);
+          }
+        }
+        res->push_back(fill_cols_map_[i], batch);
+      }
+      delete previous_agg_iter;
+      delete after_agg_iter;
+      break;
+    }
+    case FillType::CONSTANT: {
+      for (int i = 0; i < fill_kw_scan_cols_.size(); ++i) {
+        fillColumnResultSet(res, i, const_fill_value_);
+      }
+      break;
+    }
+    case FillType::LINEAR: {
+      std::vector<uint32_t> entity_ids = {cur_entity_id_};
+      std::vector<k_int32> agg_extend_cols;
+      uint32_t col_num = 2 * fill_kw_scan_cols_.size();
+      std::vector<k_uint32> kw_scan_cols(col_num), ts_scan_cols(col_num);
+      std::vector<Sumfunctype> previous_agg_type(col_num), after_agg_type(col_num);
+      for (int i = 0; i < fill_kw_scan_cols_.size(); ++i) {
+        previous_agg_type[2 * i] = Sumfunctype::LASTTS;
+        previous_agg_type[2 * i + 1] = Sumfunctype::LAST;
+        after_agg_type[2 * i] = Sumfunctype::FIRSTTS;
+        after_agg_type[2 * i + 1] = Sumfunctype::FIRST;
+        kw_scan_cols[2 * i] = kw_scan_cols[2 * i + 1] = fill_kw_scan_cols_[i];
+        ts_scan_cols[2 * i] = ts_scan_cols[2 * i + 1] = fill_ts_scan_cols_[i];
+      }
+
+      auto previous_agg_iter = new TsAggIteratorImpl(vgroup_, table_version_, entity_ids, before_ts_span_,
+                                                     block_filter_, kw_scan_cols, ts_scan_cols, agg_extend_cols,
+                                                     previous_agg_type, {}, table_schema_mgr_, scan_schema_, UINT64_MAX);
+      s = previous_agg_iter->Init(is_reversed_);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("AggIterator Init failed.")
+        return KStatus::FAIL;
+      }
+      k_uint32 previous_count = 0;
+      ResultSet previous_res{col_num};
+      s = previous_agg_iter->Next(&previous_res, &previous_count, is_finished, ts, ts_scan_stats);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("AggIterator Next failed.")
+        return KStatus::FAIL;
+      }
+
+      auto after_agg_iter = new TsAggIteratorImpl(vgroup_, table_version_, entity_ids, after_ts_span_, block_filter_,
+                                                  kw_scan_cols, ts_scan_cols, agg_extend_cols, after_agg_type,
+                                                  {}, table_schema_mgr_, scan_schema_, UINT64_MAX);
+      s = after_agg_iter->Init(is_reversed_);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("AggIterator Init failed.")
+        return KStatus::FAIL;
+      }
+      k_uint32 after_count = 0;
+      ResultSet after_res{col_num};
+      s = after_agg_iter->Next(&after_res, &after_count, is_finished, ts, ts_scan_stats);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("AggIterator Next failed.")
+        return KStatus::FAIL;
+      }
+
+      for (int i = 0; i < fill_kw_scan_cols_.size(); ++i) {
+        k_uint32 kw_col_idx = fill_kw_scan_cols_[i];
+        if (!isSumType((DATATYPE) attrs_[kw_col_idx].type)) {
+          Batch* batch = new AggBatch(nullptr, 0);
+          res->push_back(fill_cols_map_[i], batch);
+          continue;
+        }
+        bool is_before_null = false, is_after_null = false;
+        previous_res.data[2 * i][0]->isNull(0, &is_before_null);
+        after_res.data[2 * i][0]->isNull(0, &is_after_null);
+        if (is_before_null || is_after_null) {
+          Batch* batch = new AggBatch(nullptr, 0);
+          res->push_back(fill_cols_map_[i], batch);
+        } else {
+          timestamp64 t1 = KTimestamp(previous_res.data[2 * i][0]->mem);
+          timestamp64 t2 = KTimestamp(after_res.data[2 * i][0]->mem);
+          calculateLinearResultSet(res, i, t1, t2, previous_res.data[2 * i + 1][0]->mem,
+                                   after_res.data[2 * i + 1][0]->mem);
+        }
+      }
+      delete previous_agg_iter;
+      delete after_agg_iter;
+      break;
+    }
+    default:
+      break;
+  }
+  if (res->data[0].empty()) {
+    char* value = static_cast<char*>(malloc(sizeof(k_int64)));
+    if (value == nullptr) {
+      LOG_ERROR("malloc failed, cannot allocate memory, size: %lu", sizeof(k_int64));
+      return KStatus::FAIL;
+    }
+    KInt64(value) = fill_ts_point_;
+    Batch* ts_batch = new AggBatch(value, 1);
+    ts_batch->is_new = true;
+    res->push_back(0, ts_batch);
+  }
+  res->entity_index = {1, cur_entity_id_, vgroup_->GetVGroupID()};
+  switchEntity();
+  return KStatus::SUCCESS;
+}
+
+TsAggIteratorImpl::TsAggIteratorImpl(const std::shared_ptr<TsVGroup>& vgroup, uint32_t version,
                                          vector<uint32_t>& entity_ids,
                                          std::vector<KwTsSpan>& ts_spans, std::vector<BlockFilter>& block_filter,
                                          std::vector<k_uint32>& kw_scan_cols,
@@ -768,21 +1602,21 @@ TsAggIteratorV2Impl::TsAggIteratorV2Impl(const std::shared_ptr<TsVGroup>& vgroup
                                          std::vector<Sumfunctype>& scan_agg_types,
                                          const std::vector<timestamp64>& ts_points,
                                          const std::shared_ptr<TsTableSchemaManager>& table_schema_mgr,
-                                         const std::shared_ptr<MMapMetricsTable>& schema)
-    : TsStorageIteratorV2Impl::TsStorageIteratorV2Impl(vgroup, version, entity_ids, ts_spans, block_filter,
-                                                       kw_scan_cols, ts_scan_cols, table_schema_mgr, schema),
+                                         const std::shared_ptr<MMapMetricsTable>& schema, TS_OSN scan_osn)
+    : TsStorageIteratorImpl::TsStorageIteratorImpl(vgroup, version, entity_ids, ts_spans, block_filter,
+                                                       kw_scan_cols, ts_scan_cols, table_schema_mgr, schema, scan_osn),
       scan_agg_types_(scan_agg_types),
       last_ts_points_(ts_points),
       agg_extend_cols_{agg_extend_cols} {}
 
-TsAggIteratorV2Impl::~TsAggIteratorV2Impl() {}
+TsAggIteratorImpl::~TsAggIteratorImpl() {}
 
 inline bool PartitionLessThan(std::shared_ptr<const TsPartitionVersion>& a, std::shared_ptr<const TsPartitionVersion>& b) {
   return a->GetStartTime() < b->GetEndTime();
 }
 
-KStatus TsAggIteratorV2Impl::Init(bool is_reversed) {
-  KStatus s = TsStorageIteratorV2Impl::Init(is_reversed);
+KStatus TsAggIteratorImpl::Init(bool is_reversed) {
+  KStatus s = TsStorageIteratorImpl::Init(is_reversed);
   if (s != KStatus::SUCCESS) {
     return s;
   }
@@ -920,6 +1754,13 @@ KStatus TsAggIteratorV2Impl::Init(bool is_reversed) {
   only_count_ts_ = (scan_agg_types_.size() == 1
         && scan_agg_types_[0] == Sumfunctype::COUNT && kw_scan_cols_.size() == 1 && kw_scan_cols_[0] == 0);
 
+  for (const auto& type : scan_agg_types_) {
+    if (type != COUNT && type != MAX && type != MIN && type != SUM) {
+      only_partition_agg_type_ = false;
+      break;
+    }
+  }
+
   for (int i = 0; i < scan_agg_types_.size(); ++i) {
     if (scan_agg_types_[i] != LAST && scan_agg_types_[i] != LASTTS &&
         scan_agg_types_[i] != LAST_ROW && scan_agg_types_[i] != LASTROWTS) {
@@ -948,11 +1789,11 @@ KStatus TsAggIteratorV2Impl::Init(bool is_reversed) {
   return KStatus::SUCCESS;
 }
 
-bool TsAggIteratorV2Impl::IsDisordered() {
+bool TsAggIteratorImpl::IsDisordered() {
   return false;
 }
 
-KStatus TsAggIteratorV2Impl::Next(ResultSet* res, k_uint32* count, bool* is_finished, timestamp64 ts,
+KStatus TsAggIteratorImpl::Next(ResultSet* res, k_uint32* count, bool* is_finished, timestamp64 ts,
                                   TsScanStats* ts_scan_stats) {
   *count = 0;
   if (cur_entity_index_ >= entity_ids_.size()) {
@@ -1044,6 +1885,8 @@ KStatus TsAggIteratorV2Impl::Next(ResultSet* res, k_uint32* count, bool* is_fini
 
   if (CLUSTER_SETTING_COUNT_USE_STATISTICS && only_count_ts_) {
     ret = CountAggregate(ts_scan_stats);
+  } else if (CLUSTER_SETTING_PARTITION_AGG && only_partition_agg_type_ && !calc_partition_agg_invoke_) {
+    ret = PartitionAggregate(ts_scan_stats);
   } else {
     ret = Aggregate(ts_scan_stats);
   }
@@ -1091,7 +1934,7 @@ KStatus TsAggIteratorV2Impl::Next(ResultSet* res, k_uint32* count, bool* is_fini
   return KStatus::SUCCESS;
 }
 
-KStatus TsAggIteratorV2Impl::Aggregate(TsScanStats* ts_scan_stats) {
+KStatus TsAggIteratorImpl::Aggregate(TsScanStats* ts_scan_stats) {
   // Scan forwards to aggrate first col along with other agg functions
   int first_partition_idx = 0;
   for (; first_partition_idx < ts_partitions_.size(); ++first_partition_idx) {
@@ -1253,7 +2096,7 @@ KStatus TsAggIteratorV2Impl::Aggregate(TsScanStats* ts_scan_stats) {
   return KStatus::SUCCESS;
 }
 
-KStatus TsAggIteratorV2Impl::CountAggregate(TsScanStats* ts_scan_stats) {
+KStatus TsAggIteratorImpl::CountAggregate(TsScanStats* ts_scan_stats) {
   KStatus ret;
   for (int idx = 0; idx < ts_partitions_.size(); idx++) {
     cur_partition_index_ = idx;
@@ -1299,8 +2142,8 @@ KStatus TsAggIteratorV2Impl::CountAggregate(TsScanStats* ts_scan_stats) {
           mem_ts_spans.push_back({mem_block->GetFirstTS(), mem_block->GetLastTS()});
           mem_count += mem_block->GetRowNum();
         }
-        if (EngineOptions::g_dedup_rule == DedupRule::KEEP ||
-        (checkTimestampWithSpans(mem_ts_spans, count_stats.min_ts, count_stats.max_ts) ==
+        if (EngineOptions::g_dedup_rule == DedupRule::KEEP_EXPERIMENTAL ||
+            (checkTimestampWithSpans(mem_ts_spans, count_stats.min_ts, count_stats.max_ts) ==
         TimestampCheckResult::NonOverlapping)) {
           KUint64(final_agg_data_[0].data) += count_stats.valid_count + mem_count;
         } else {
@@ -1317,10 +2160,10 @@ KStatus TsAggIteratorV2Impl::CountAggregate(TsScanStats* ts_scan_stats) {
         LOG_ERROR("e_paritition GetBlockSpan failed.");
         return ret;
       }
-      if (!count_stats.is_count_valid && count_stats.entity_id != 0 && EngineOptions::count_stats_recalc_cycle != 0) {
+      if (!count_stats.is_count_valid && count_stats.entity_id != 0 && EngineOptions::agg_stats_recalc_cycle != 0) {
         ret = vgroup_->AddRecalcEntity(partition_version->GetPartitionIdentifier(), table_id_, count_stats.entity_id);
         if (ret != KStatus::SUCCESS) {
-          LOG_ERROR("AddRecalcEntity partition[%s] table[%lu} entity[%lu] failed.",
+          LOG_WARN("AddRecalcEntity partition[%s] table[%lu} entity[%lu] failed.",
             partition_version->GetPartitionIdentifierStr().c_str(), table_id_, count_stats.entity_id);
         }
       }
@@ -1328,6 +2171,223 @@ KStatus TsAggIteratorV2Impl::CountAggregate(TsScanStats* ts_scan_stats) {
     ret = UpdateAggregation(false, ts_scan_stats);
     if (ret != KStatus::SUCCESS) {
       return ret;
+    }
+  }
+  return KStatus::SUCCESS;
+}
+
+KStatus TsAggIteratorImpl::PartitionAggregate(TsScanStats* ts_scan_stats) {
+  auto attrs = scan_schema_->getSchemaInfoExcludeDroppedPtr();
+  uint32_t agg_header_size = attrs->size() * sizeof(uint32_t);
+  DATATYPE ts_type = static_cast<DATATYPE>((*attrs)[0].type);
+
+  std::unordered_set<uint32_t> agg_col_idxs;
+  for (auto idx : count_col_idxs_) {
+    agg_col_idxs.insert(idx);
+  }
+  for (auto idx : max_col_idxs_) {
+    agg_col_idxs.insert(idx);
+  }
+  for (auto idx : min_col_idxs_) {
+    agg_col_idxs.insert(idx);
+  }
+  for (auto idx : sum_col_idxs_) {
+    agg_col_idxs.insert(idx);
+  }
+
+  for (int i = 0; i < ts_partitions_.size(); i++) {
+    cur_partition_index_ = i;
+    TsScanFilterParams filter{db_id_, table_id_, vgroup_->GetVGroupID(),
+                              entity_ids_[cur_entity_index_], ts_col_type_, scan_osn_, ts_spans_};
+    auto partition = ts_partitions_[cur_partition_index_];
+    auto path = partition->GetPartitionPath();
+
+    TS_OSN max_osn;
+    auto s = partition->GetMaxOSN(db_id_, table_id_, entity_ids_[cur_entity_index_], ts_col_type_, max_osn);
+    if (s != KStatus::SUCCESS) {
+      LOG_ERROR("GetDelMaxOSN failed");
+      return s;
+    }
+
+    auto agg_reader = partition->GetAggReader();
+    TsEntityPartitionAggIndex agg_index;
+    if (agg_reader) {
+      agg_index.entity_id = entity_ids_[cur_entity_index_];
+      s = agg_reader->GetPartitionAggIndex(agg_index);
+      if (s != KStatus::SUCCESS) {
+        LOG_INFO("table %lu entity %u has no partition aggregation result, will goto general query", table_id_,
+          entity_ids_[cur_entity_index_]);
+        s = partition->GetBlockSpans(filter, &ts_block_spans_, table_schema_mgr_, scan_schema_, ts_scan_stats);
+        if (s != KStatus::SUCCESS) {
+          LOG_ERROR("partition [%s] GetBlockSpan failed", partition->GetPartitionPath().c_str());
+          return s;
+        }
+        s = UpdateAggregation(false, ts_scan_stats);
+        return s;
+      }
+    }
+
+    if (agg_reader && agg_index.max_osn >= max_osn && agg_index.table_version == table_version_ &&
+      checkTimestampWithSpans(ts_spans_, agg_index.min_ts,
+                              agg_index.max_ts) == TimestampCheckResult::FullyContained) {
+      TsSliceGuard entity_agg;
+      s = agg_reader->GetPartitionAgg(agg_index.agg_offset, agg_index.agg_len, entity_agg);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("GetPartitionAgg failed");
+        return s;
+      }
+
+      std::unordered_map<uint32_t, TsSliceGuard> col_aggs;
+      for (auto col_idx : agg_col_idxs) {
+        auto kw_col_idx = kw_scan_cols_[col_idx];
+        TsSliceGuard col_agg;
+        uint32_t start_offset = 0;
+        if (kw_col_idx != 0) {
+          start_offset = *reinterpret_cast<uint32_t*>(entity_agg.data() + (kw_col_idx - 1) * sizeof(uint32_t));
+        }
+        uint32_t end_offset = *reinterpret_cast<uint32_t*>(entity_agg.data() + (kw_col_idx) * sizeof(uint32_t));
+        assert(end_offset >= start_offset);
+        uint32_t len = end_offset - start_offset;
+        if (len) {
+          col_agg = TsSliceGuard(entity_agg.data() + agg_header_size + start_offset, len);
+        }
+        col_aggs[kw_col_idx] = std::move(col_agg);
+      }
+
+      // Aggregate count col
+      for (auto idx : count_col_idxs_) {
+        auto kw_col_idx = kw_scan_cols_[idx];
+        auto& col_agg = col_aggs[kw_col_idx];
+        if (!col_agg.empty()) {
+          KUint64(final_agg_data_[idx].data) += *reinterpret_cast<uint64_t*>(col_agg.data());
+        }
+      }
+      // Aggregate max col
+      for (auto idx : max_col_idxs_) {
+        auto kw_col_idx = kw_scan_cols_[idx];
+        auto& col_agg = col_aggs[kw_col_idx];
+        if (col_agg.empty()) {
+          continue;
+        }
+
+        auto type = attrs_[kw_col_idx].type;
+        TSSlice& agg_data = final_agg_data_[idx];
+
+        if (!isVarLenType(type)) {
+          void* pre_max = col_agg.data() + sizeof(uint64_t);
+          int32_t size = kw_col_idx == 0 ? 8 : attrs_[kw_col_idx].size;
+          bool need_copy{false};
+          if (agg_data.data == nullptr) {
+            agg_data.len = size;
+            InitAggData(agg_data);
+            need_copy = true;
+          } else if (cmp(pre_max, agg_data.data, type, kw_col_idx == 0 ? 8 : size) > 0) {
+            need_copy = true;
+          }
+          if (need_copy) {
+            memcpy(agg_data.data, pre_max, kw_col_idx == 0 ? 8 : size);
+          }
+        } else {
+          auto max_len = *reinterpret_cast<const uint16_t*>(col_agg.data() + sizeof(uint64_t));
+          string pre_max_val(col_agg.data() + sizeof(uint64_t) + sizeof(uint16_t) * 2, max_len);
+          if (agg_data.data) {
+            string current_max({agg_data.data + kStringLenLen, agg_data.len - kStringLenLen});
+            if (current_max < pre_max_val) {
+              free(agg_data.data);
+              agg_data.data = nullptr;
+            }
+          }
+          if (agg_data.data == nullptr) {
+            agg_data.len = pre_max_val.length() + kStringLenLen;
+            agg_data.data = static_cast<char*>(malloc(agg_data.len));
+            KUint16(agg_data.data) = pre_max_val.length();
+            memcpy(agg_data.data + kStringLenLen, pre_max_val.c_str(), pre_max_val.length());
+          }
+        }
+      }
+      // Aggregate min col
+      for (auto idx : min_col_idxs_) {
+        auto kw_col_idx = kw_scan_cols_[idx];
+        auto& col_agg = col_aggs[kw_col_idx];
+        if (col_agg.empty()) {
+          continue;
+        }
+
+        auto type = attrs_[kw_col_idx].type;
+        TSSlice& agg_data = final_agg_data_[idx];
+
+        if (!isVarLenType(type)) {
+          int32_t size = kw_col_idx == 0 ? 8 : attrs_[kw_col_idx].size;
+          void* pre_min = col_agg.data() + sizeof(uint64_t) + size;
+          bool need_copy{false};
+          if (agg_data.data == nullptr) {
+            agg_data.len = size;
+            InitAggData(agg_data);
+            need_copy = true;
+          } else if (cmp(pre_min, agg_data.data, type, kw_col_idx == 0 ? 8 : size) < 0) {
+            need_copy = true;
+          }
+          if (need_copy) {
+            memcpy(agg_data.data, pre_min, kw_col_idx == 0 ? 8 : size);
+          }
+        } else {
+          auto max_len = *reinterpret_cast<const uint16_t*>(col_agg.data() + sizeof(uint64_t));
+          auto min_len = *reinterpret_cast<const uint16_t*>(col_agg.data() + sizeof(uint64_t) + sizeof(uint16_t));
+          void* pre_min = col_agg.data() + sizeof(uint64_t) + sizeof(uint16_t) * 2 + max_len;
+          string pre_min_val(static_cast<char*>(pre_min), min_len);
+          if (agg_data.data) {
+            string current_min({agg_data.data + kStringLenLen, agg_data.len - kStringLenLen});
+            if (current_min > pre_min_val) {
+              free(agg_data.data);
+              agg_data.data = nullptr;
+            }
+          }
+          if (agg_data.data == nullptr) {
+            agg_data.len = pre_min_val.length() + kStringLenLen;
+            agg_data.data = static_cast<char*>(malloc(agg_data.len));
+            KUint16(agg_data.data) = pre_min_val.length();
+            memcpy(agg_data.data + kStringLenLen, pre_min_val.c_str(), pre_min_val.length());
+          }
+        }
+      }
+      // Aggregate sum col
+      for (auto idx : sum_col_idxs_) {
+        auto kw_col_idx = kw_scan_cols_[idx];
+        auto& col_agg = col_aggs[kw_col_idx];
+        if (col_agg.empty()) {
+          continue;
+        }
+
+        int32_t size = kw_col_idx == 0 ? 8 : attrs_[kw_col_idx].size;
+        auto type = attrs_[kw_col_idx].type;
+        bool pre_sum_is_overflow = *reinterpret_cast<bool*>(col_agg.data() + sizeof(uint64_t) + size * 2);
+        void* pre_sum = col_agg.data() + sizeof(uint64_t) + size * 2 + 1;
+        TSSlice& agg_data = final_agg_data_[idx];
+        if (agg_data.data == nullptr) {
+          agg_data.len = sizeof(int64_t);
+          InitAggData(agg_data);
+          InitSumValue(agg_data.data, type);
+        }
+        KStatus ret = KStatus::SUCCESS;
+        if (!is_overflow_[idx]) {
+          ret = AddSumNotOverflowYetByPreSum(idx, type, pre_sum, agg_data, pre_sum_is_overflow);
+        } else {
+          ret = AddSumOverflowByPreSum(type, pre_sum, agg_data, pre_sum_is_overflow);
+        }
+        if (ret != KStatus::SUCCESS) {
+          return KStatus::FAIL;
+        }
+      }
+    } else {
+      s = partition->GetBlockSpans(filter, &ts_block_spans_, table_schema_mgr_, scan_schema_, ts_scan_stats);
+      if (s != KStatus::SUCCESS) {
+        LOG_ERROR("partition [%s] GetBlockSpan failed", partition->GetPartitionPath().c_str());
+        return s;
+      }
+      s = UpdateAggregation(false, ts_scan_stats);
+      if (s != KStatus::SUCCESS) {
+        return s;
+      }
     }
   }
   return KStatus::SUCCESS;
@@ -1341,7 +2401,7 @@ inline bool LastTSLessThan(shared_ptr<TsBlockSpan>& a, shared_ptr<TsBlockSpan>& 
   return a->GetLastTS() < b->GetLastTS();
 }
 
-KStatus TsAggIteratorV2Impl::UpdateAggregation(bool can_remove_last_candidate, TsScanStats* ts_scan_stats) {
+KStatus TsAggIteratorImpl::UpdateAggregation(bool can_remove_last_candidate, TsScanStats* ts_scan_stats) {
   if (ts_block_spans_.empty()) {
     return KStatus::SUCCESS;
   }
@@ -1410,12 +2470,12 @@ KStatus TsAggIteratorV2Impl::UpdateAggregation(bool can_remove_last_candidate, T
   return KStatus::SUCCESS;
 }
 
-inline void TsAggIteratorV2Impl::InitAggData(TSSlice& agg_data) {
+inline void TsAggIteratorImpl::InitAggData(TSSlice& agg_data) {
   agg_data.data = static_cast<char*>(malloc(agg_data.len));
   memset(agg_data.data, 0, agg_data.len);
 }
 
-inline void TsAggIteratorV2Impl::InitSumValue(void* data, int32_t type) {
+inline void TsAggIteratorImpl::InitSumValue(void* data, int32_t type) {
   switch (type) {
     case DATATYPE::INT8:
     case DATATYPE::INT16:
@@ -1433,14 +2493,14 @@ inline void TsAggIteratorV2Impl::InitSumValue(void* data, int32_t type) {
   }
 }
 
-inline void TsAggIteratorV2Impl::ConvertToDoubleIfOverflow(uint32_t col_idx, bool over_flow, TSSlice& agg_data) {
+inline void TsAggIteratorImpl::ConvertToDoubleIfOverflow(uint32_t col_idx, bool over_flow, TSSlice& agg_data) {
   if (over_flow) {
     *reinterpret_cast<double*>(agg_data.data) = *reinterpret_cast<int64_t*>(agg_data.data);
     is_overflow_[col_idx] = true;
   }
 }
 
-inline KStatus TsAggIteratorV2Impl::AddSumNotOverflowYet(uint32_t col_idx,
+inline KStatus TsAggIteratorImpl::AddSumNotOverflowYet(uint32_t col_idx,
                                                           int32_t type,
                                                           void* current,
                                                           TSSlice& agg_data) {
@@ -1489,7 +2549,7 @@ inline KStatus TsAggIteratorV2Impl::AddSumNotOverflowYet(uint32_t col_idx,
 }
 
 
-inline KStatus TsAggIteratorV2Impl::AddSumNotOverflowYetByPreSum(uint32_t col_idx,
+inline KStatus TsAggIteratorImpl::AddSumNotOverflowYetByPreSum(uint32_t col_idx,
                                                                  int32_t type,
                                                                  void* current,
                                                                  TSSlice& agg_data,
@@ -1530,7 +2590,7 @@ inline KStatus TsAggIteratorV2Impl::AddSumNotOverflowYetByPreSum(uint32_t col_id
   return KStatus::SUCCESS;
 }
 
-inline KStatus TsAggIteratorV2Impl::AddSumOverflow(int32_t type,
+inline KStatus TsAggIteratorImpl::AddSumOverflow(int32_t type,
                                                     void* current,
                                                     TSSlice& agg_data) {
   switch (type) {
@@ -1567,7 +2627,7 @@ inline KStatus TsAggIteratorV2Impl::AddSumOverflow(int32_t type,
   return KStatus::SUCCESS;
 }
 
-inline KStatus TsAggIteratorV2Impl::AddSumOverflowByPreSum(int32_t type,
+inline KStatus TsAggIteratorImpl::AddSumOverflowByPreSum(int32_t type,
                                                            void* current,
                                                            TSSlice& agg_data,
                                                            bool is_overflow) {
@@ -1594,7 +2654,7 @@ inline KStatus TsAggIteratorV2Impl::AddSumOverflowByPreSum(int32_t type,
   return KStatus::SUCCESS;
 }
 
-KStatus TsAggIteratorV2Impl::UpdateAggregation(std::shared_ptr<TsBlockSpan>& block_span,
+KStatus TsAggIteratorImpl::UpdateAggregation(std::shared_ptr<TsBlockSpan>& block_span,
                                                 bool aggregate_first_last_cols,
                                                 bool can_remove_last_candidate,
                                                 TsScanStats* ts_scan_stats) {
@@ -1684,7 +2744,7 @@ KStatus TsAggIteratorV2Impl::UpdateAggregation(std::shared_ptr<TsBlockSpan>& blo
   for (auto idx : count_col_idxs_) {
     auto kw_col_idx = kw_scan_cols_[idx];
     if (!block_span->IsColExist(kw_col_idx)) {
-      // No data for this column in this block span, so just move on to the next last col.
+      // No data for this column in this block span, so just move on to the next count col.
       continue;
     }
     if (block_span->IsColNotNull(kw_col_idx)) {
@@ -1713,7 +2773,7 @@ KStatus TsAggIteratorV2Impl::UpdateAggregation(std::shared_ptr<TsBlockSpan>& blo
   for (auto idx : sum_col_idxs_) {
     auto kw_col_idx = kw_scan_cols_[idx];
     if (!block_span->IsColExist(kw_col_idx)) {
-      // No data for this column in this block span, so just move on to the next last col.
+      // No data for this column in this block span, so just move on to the next sum col.
       continue;
     }
     auto type = block_span->GetColType(kw_col_idx);
@@ -1785,7 +2845,7 @@ KStatus TsAggIteratorV2Impl::UpdateAggregation(std::shared_ptr<TsBlockSpan>& blo
   for (auto idx : max_col_idxs_) {
     auto kw_col_idx = kw_scan_cols_[idx];
     if (!block_span->IsColExist(kw_col_idx)) {
-      // No data for this column in this block span, so just move on to the next last col.
+      // No data for this column in this block span, so just move on to the next max col.
       continue;
     }
     TSSlice& agg_data = final_agg_data_[idx];
@@ -1910,7 +2970,7 @@ KStatus TsAggIteratorV2Impl::UpdateAggregation(std::shared_ptr<TsBlockSpan>& blo
   for (auto idx : min_col_idxs_) {
     auto kw_col_idx = kw_scan_cols_[idx];
     if (!block_span->IsColExist(kw_col_idx)) {
-      // No data for this column in this block span, so just move on to the next last col.
+      // No data for this column in this block span, so just move on to the next min col.
       continue;
     }
     TSSlice& agg_data = final_agg_data_[idx];
@@ -2035,7 +3095,7 @@ KStatus TsAggIteratorV2Impl::UpdateAggregation(std::shared_ptr<TsBlockSpan>& blo
   return KStatus::SUCCESS;
 }
 
-KStatus TsOffsetIteratorV2Impl::divideBlockSpans(timestamp64 begin_ts, timestamp64 end_ts, uint32_t* lower_cnt,
+KStatus TsOffsetIteratorImpl::divideBlockSpans(timestamp64 begin_ts, timestamp64 end_ts, uint32_t* lower_cnt,
                                                  deque<pair<pair<timestamp64, timestamp64>,
                                                  std::shared_ptr<TsBlockSpan>>>& lower_block_span) {
   uint32_t size = filter_block_spans_.size();
@@ -2095,7 +3155,7 @@ KStatus TsOffsetIteratorV2Impl::divideBlockSpans(timestamp64 begin_ts, timestamp
   return KStatus::SUCCESS;
 }
 
-KStatus TsOffsetIteratorV2Impl::filterLower(uint32_t* cnt) {
+KStatus TsOffsetIteratorImpl::filterLower(uint32_t* cnt) {
   *cnt = 0;
   timestamp64 begin_ts = convertSecondToPrecisionTS(p_time_it_->second.begin()->second->GetStartTime(), ts_col_type_);
   timestamp64 end_ts = convertSecondToPrecisionTS(p_time_it_->second.begin()->second->GetEndTime(), ts_col_type_);
@@ -2132,7 +3192,7 @@ KStatus TsOffsetIteratorV2Impl::filterLower(uint32_t* cnt) {
   return KStatus::SUCCESS;
 }
 
-KStatus TsOffsetIteratorV2Impl::filterUpper(uint32_t filter_num, uint32_t* cnt) {
+KStatus TsOffsetIteratorImpl::filterUpper(uint32_t filter_num, uint32_t* cnt) {
   *cnt = 0;
   timestamp64 begin_ts = convertSecondToPrecisionTS(p_time_it_->second.begin()->second->GetStartTime(), ts_col_type_);
   timestamp64 end_ts = convertSecondToPrecisionTS(p_time_it_->second.begin()->second->GetEndTime(), ts_col_type_);
@@ -2170,7 +3230,7 @@ KStatus TsOffsetIteratorV2Impl::filterUpper(uint32_t filter_num, uint32_t* cnt) 
   return KStatus::SUCCESS;
 }
 
-KStatus TsOffsetIteratorV2Impl::ScanPartitionBlockSpans(uint32_t* cnt, TsScanStats* ts_scan_stats) {
+KStatus TsOffsetIteratorImpl::ScanPartitionBlockSpans(uint32_t* cnt, TsScanStats* ts_scan_stats) {
   *cnt = 0;
   KStatus ret = KStatus::SUCCESS;
   for (const auto& it : p_time_it_->second) {
@@ -2237,7 +3297,7 @@ KStatus TsOffsetIteratorV2Impl::ScanPartitionBlockSpans(uint32_t* cnt, TsScanSta
                                             EngineOptions::g_dedup_rule, is_reversed_);
       ret = sorted_iter.Init();
       if (ret != KStatus::SUCCESS) {
-        LOG_ERROR("TsOffsetIteratorV2Impl failed to init block span sorted iterator for partition: %lu.", p_time_it_->first);
+        LOG_ERROR("TsOffsetIteratorImpl failed to init block span sorted iterator for partition: %lu.", p_time_it_->first);
         return KStatus::FAIL;
       }
       bool is_finished = false;
@@ -2252,7 +3312,7 @@ KStatus TsOffsetIteratorV2Impl::ScanPartitionBlockSpans(uint32_t* cnt, TsScanSta
   return ret;
 }
 
-KStatus TsOffsetIteratorV2Impl::Init(bool is_reversed) {
+KStatus TsOffsetIteratorImpl::Init(bool is_reversed) {
   GetTerminationTime();
   is_reversed_ = is_reversed;
   comparator_.is_reversed = is_reversed_;
@@ -2276,7 +3336,7 @@ KStatus TsOffsetIteratorV2Impl::Init(bool is_reversed) {
   return KStatus::SUCCESS;
 }
 
-KStatus TsOffsetIteratorV2Impl::filterBlockSpan(TsScanStats* ts_scan_stats) {
+KStatus TsOffsetIteratorImpl::filterBlockSpan(TsScanStats* ts_scan_stats) {
   Defer defer{[&]() { ts_block_spans_.clear(); }};
   uint32_t row_cnt = 0;
   KStatus ret = ScanPartitionBlockSpans(&row_cnt, ts_scan_stats);
@@ -2321,7 +3381,7 @@ KStatus TsOffsetIteratorV2Impl::filterBlockSpan(TsScanStats* ts_scan_stats) {
   return KStatus::SUCCESS;
 }
 
-KStatus TsOffsetIteratorV2Impl::Next(ResultSet* res, k_uint32* count, timestamp64 ts, TsScanStats* ts_scan_stats) {
+KStatus TsOffsetIteratorImpl::Next(ResultSet* res, k_uint32* count, timestamp64 ts, TsScanStats* ts_scan_stats) {
   *count = 0;
   KStatus ret;
   while (block_spans_.empty()) {
@@ -2370,7 +3430,7 @@ KStatus TsOffsetIteratorV2Impl::Next(ResultSet* res, k_uint32* count, timestamp6
   return KStatus::SUCCESS;
 }
 
-TsRawDataIteratorV2ImplByOSN::TsRawDataIteratorV2ImplByOSN(const std::shared_ptr<TsVGroup>& vgroup,
+TsRawDataIteratorImplByOSN::TsRawDataIteratorImplByOSN(const std::shared_ptr<TsVGroup>& vgroup,
   uint32_t version, vector<EntityResultIndex>& entity_ids,
   std::vector<k_uint32>& scan_cols, std::vector<k_uint32>& ts_scan_cols,
   std::vector<KwOSNSpan>& osn_spans, std::vector<KwTsSpan>& ts_spans,
@@ -2383,7 +3443,7 @@ TsRawDataIteratorV2ImplByOSN::TsRawDataIteratorV2ImplByOSN(const std::shared_ptr
   ts_spans_ = SortAndMergeSpan(ts_spans);
 }
 
-KStatus TsRawDataIteratorV2ImplByOSN::Init() {
+KStatus TsRawDataIteratorImplByOSN::Init() {
   auto s = table_schema_mgr_->GetMetricSchema(table_version_, &scan_schema_);
   if (s != KStatus::SUCCESS) {
     LOG_ERROR("get table version[%u] schema failed.", table_version_);
@@ -2401,7 +3461,7 @@ KStatus TsRawDataIteratorV2ImplByOSN::Init() {
   return KStatus::SUCCESS;
 }
 
-KStatus TsRawDataIteratorV2ImplByOSN::MoveToNextEntity(bool* is_finished, TsScanStats* ts_scan_stats) {
+KStatus TsRawDataIteratorImplByOSN::MoveToNextEntity(bool* is_finished, TsScanStats* ts_scan_stats) {
   ts_block_spans_.clear();
   cur_entity_index_++;
   if (cur_entity_index_ >= entitys_.size()) {
@@ -2423,7 +3483,7 @@ KStatus TsRawDataIteratorV2ImplByOSN::MoveToNextEntity(bool* is_finished, TsScan
   return KStatus::SUCCESS;
 }
 
-KStatus TsRawDataIteratorV2ImplByOSN::Next(ResultSet* res, k_uint32* count, bool* is_finished,
+KStatus TsRawDataIteratorImplByOSN::Next(ResultSet* res, k_uint32* count, bool* is_finished,
   timestamp64 ts, TsScanStats* ts_scan_stats) {
   *count = 0;
   *is_finished = false;
@@ -2475,8 +3535,8 @@ KStatus TsRawDataIteratorV2ImplByOSN::Next(ResultSet* res, k_uint32* count, bool
         break;
       }
       default:
-        LOG_ERROR("sending status cannot be this.");
-        break;
+        LOG_ERROR("sending status cannot be this. sending status is %d", cur_entity_status_);
+        return KStatus::FAIL;
     }
     if (*count > 0) {
       return KStatus::SUCCESS;
@@ -2486,7 +3546,7 @@ KStatus TsRawDataIteratorV2ImplByOSN::Next(ResultSet* res, k_uint32* count, bool
   return KStatus::FAIL;
 }
 
-KStatus TsRawDataIteratorV2ImplByOSN::GetMetricDelRows(ResultSet* res, k_uint32* count) {
+KStatus TsRawDataIteratorImplByOSN::GetMetricDelRows(ResultSet* res, k_uint32* count) {
   *count = 0;
   auto op_osn = reinterpret_cast<OperatorInfoOfRecord*>(entitys_[cur_entity_index_].op_with_osn.get());
   assert(op_osn != nullptr);
@@ -2526,7 +3586,7 @@ KStatus TsRawDataIteratorV2ImplByOSN::GetMetricDelRows(ResultSet* res, k_uint32*
   return KStatus::SUCCESS;
 }
 
-KStatus TsRawDataIteratorV2ImplByOSN::AppendExtendColSpace(ResultSet* res, uint32_t count) {
+KStatus TsRawDataIteratorImplByOSN::AppendExtendColSpace(ResultSet* res, uint32_t count) {
   size_t bitmap_len = (count + 7) / 8;
   char* value = reinterpret_cast<char*>(malloc(count * (8 + 1 + 16) + 3 * bitmap_len));
   memset(value, 0, count * (8 + 1 + 16) + 3 * bitmap_len);
@@ -2541,7 +3601,7 @@ KStatus TsRawDataIteratorV2ImplByOSN::AppendExtendColSpace(ResultSet* res, uint3
   return KStatus::SUCCESS;
 }
 
-KStatus TsRawDataIteratorV2ImplByOSN::FillEmptyMetricRow(ResultSet* res, uint32_t count,
+KStatus TsRawDataIteratorImplByOSN::FillEmptyMetricRow(ResultSet* res, uint32_t count,
   TS_OSN osn, OperatorTypeOfRecord type) {
   for (int i = 0; i < kw_scan_cols_.size(); ++i) {
     Batch* batch = nullptr;
@@ -2570,7 +3630,7 @@ KStatus TsRawDataIteratorV2ImplByOSN::FillEmptyMetricRow(ResultSet* res, uint32_
   return KStatus::SUCCESS;
 }
 
-KStatus TsRawDataIteratorV2ImplByOSN::GetMetricInsertRows(ResultSet* res, k_uint32* count, TsScanStats* ts_scan_stats) {
+KStatus TsRawDataIteratorImplByOSN::GetMetricInsertRows(ResultSet* res, k_uint32* count, TsScanStats* ts_scan_stats) {
   *count = 0;
   if (ts_block_spans_.size() > 0) {
     auto block_span = ts_block_spans_.front();
@@ -2597,7 +3657,7 @@ KStatus TsRawDataIteratorV2ImplByOSN::GetMetricInsertRows(ResultSet* res, k_uint
   return KStatus::SUCCESS;
 }
 
-TsRawDataIteratorV2ImplByOSN::~TsRawDataIteratorV2ImplByOSN() {
+TsRawDataIteratorImplByOSN::~TsRawDataIteratorImplByOSN() {
 }
 
 }  //  namespace kwdbts

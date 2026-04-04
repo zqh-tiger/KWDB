@@ -298,10 +298,10 @@ KStatus TsBlockSpan::BuildCompressedData(TsBufferBuilder* data) {
   // init column block data && column agg data
   for (uint32_t scan_idx = 0; scan_idx < scan_attrs_->size(); ++scan_idx) {
     bool has_bitmap = scan_idx > 0;
-    DATATYPE d_type = scan_idx != 0 ? static_cast<DATATYPE>((*scan_attrs_)[scan_idx].type)
+    DATATYPE col_type = scan_idx != 0 ? static_cast<DATATYPE>((*scan_attrs_)[scan_idx].type)
                       : DATATYPE::TIMESTAMP64;
     int32_t d_size = (*scan_attrs_)[scan_idx].size;
-    bool is_var_col = isVarLenType(d_type);
+    bool is_var_col = isVarLenType(col_type);
     TsBitmapBase* b = nullptr;
     std::unique_ptr<TsBitmapBase> bitmap;
     std::string ts_col_data;
@@ -363,7 +363,7 @@ KStatus TsBlockSpan::BuildCompressedData(TsBufferBuilder* data) {
       mgr.CompressBitmap(bitmap.get(), data);
       b = bitmap.get();
     }
-    auto [first, second] = mgr.GetDefaultAlgorithm(static_cast<DATATYPE>(d_type));
+    auto [first, second] = mgr.GetDefaultAlgorithm(static_cast<DATATYPE>(col_type));
     if (is_var_col) {
       // varchar use Gorilla algorithm
       first = TsCompAlg::kSimple8B_V2_u32;
@@ -372,8 +372,9 @@ KStatus TsBlockSpan::BuildCompressedData(TsBufferBuilder* data) {
       bool ok = mgr.CompressData({var_offset_data.data(), var_offset_data.size()},
                                  nullptr, nrow_, &compressed, first, second);
       if (!ok) {
-        LOG_ERROR("Compress var offset data failed");
-        return KStatus::SUCCESS;
+        LOG_ERROR("Compress var offset data failed. vg_id [%u] entity_id [%lu] col_id[%u]",
+          vgroup_id_, entity_id_, scan_idx)
+        return KStatus::FAIL;
       }
       uint32_t compressed_len = compressed.size();
       data->append(reinterpret_cast<const char *>(&compressed_len), sizeof(uint32_t));
@@ -382,8 +383,8 @@ KStatus TsBlockSpan::BuildCompressedData(TsBufferBuilder* data) {
       compressed.clear();
       ok = mgr.CompressVarchar({var_data.data(), var_data.size()}, &compressed, GenCompAlg::kSnappy);
       if (!ok) {
-        LOG_ERROR("Compress var data failed");
-        return KStatus::SUCCESS;
+        LOG_ERROR("Compress var data failed. vg_id [%u] entity_id [%lu] col_id[%u]", vgroup_id_, entity_id_, scan_idx)
+        return KStatus::FAIL;
       }
       data->append(compressed.AsSlice());
     } else {
@@ -415,14 +416,26 @@ KStatus TsBlockSpan::BuildCompressedData(TsBufferBuilder* data) {
       DATATYPE type = static_cast<DATATYPE>((*scan_attrs_)[scan_idx].type);
       AggCalculatorV2 aggCalc(fixed_col_value_addr, b, type, d_size, nrow_);
       auto is_not_null = (*scan_attrs_)[scan_idx].isFlag(AINFO_NOT_NULL);
-      *reinterpret_cast<bool *>(sum.data()) = aggCalc.CalcAggForFlush(is_not_null, count, max.data(),
-                                                                      min.data(), sum.data() + 1);
+      bool is_overflow = false;
+      s = aggCalc.CalcAggForFlush(is_not_null, is_overflow, count, max.data(), min.data(), sum.data() + 1);
+      if (s != KStatus::SUCCESS) {
+        return s;
+      }
+      *reinterpret_cast<bool *>(sum.data()) = is_overflow;
       if (0 != count) {
-        col_agg.resize(sizeof(uint16_t) + 2 * static_cast<size_t>(col_size) + 9);
+        int agg_size = 0;
+        if (isSumType(col_type)) {
+          agg_size = sizeof(uint16_t) + 2 * static_cast<size_t>(col_size) + 9;
+        } else {
+          agg_size = sizeof(uint16_t) + 2 * static_cast<size_t>(col_size);
+        }
+        col_agg.resize(agg_size);
         memcpy(col_agg.data(), &count, sizeof(uint16_t));
         memcpy(col_agg.data() + sizeof(uint16_t), max.data(), col_size);
         memcpy(col_agg.data() + sizeof(uint16_t) + col_size, min.data(), col_size);
-        memcpy(col_agg.data() + sizeof(uint16_t) + static_cast<size_t>(col_size) * 2, sum.data(), 9);
+        if (isSumType(col_type)) {
+          memcpy(col_agg.data() + sizeof(uint16_t) + static_cast<size_t>(col_size) * 2, sum.data(), 9);
+        }
       }
     } else {
       VarColAggCalculatorV2 aggCalc(var_rows);

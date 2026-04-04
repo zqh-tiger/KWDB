@@ -10,80 +10,21 @@
 // See the Mulan PSL v2 for more details.
 
 #include "test_util.h"
+#include "ts_test_base.h"
 #include "ts_engine.h"
 #include "ts_table.h"
 
 using namespace kwdbts;
 
 const string engine_root_path = "./tsdb";
-class TestV2DeleteTest : public ::testing::Test {
- public:
-  EngineOptions opts_;
-  TSEngineImpl *engine_;
-  kwdbContext_t g_ctx_;
-  kwdbContext_p ctx_;  
-
-  virtual void SetUp() override {
-    ctx_ = &g_ctx_;
-    InitKWDBContext(ctx_);
-    KWDBDynamicThreadPool::GetThreadPool().Init(8, ctx_);
-  }
-
-  virtual void TearDown() override {
-    KWDBDynamicThreadPool::GetThreadPool().Stop();
-  }
-
+class TestV2DeleteTest : public TsEngineTestBase {
  public:
   TestV2DeleteTest() {
-    ctx_ = &g_ctx_;
-    InitKWDBContext(ctx_);
-    opts_.db_path = engine_root_path;
-    Remove(engine_root_path);
-    MakeDirectory(engine_root_path);
-    engine_ = new TSEngineImpl(opts_);
-    auto s = engine_->Init(ctx_);
-    EXPECT_EQ(s, KStatus::SUCCESS);
-    EngineOptions::g_dedup_rule = DedupRule::KEEP;
+    EngineOptions::g_dedup_rule = DedupRule::KEEP_EXPERIMENTAL;
+    InitContext();
+    InitEngine(engine_root_path);
   }
 
-  ~TestV2DeleteTest() {
-    if (engine_) {
-      delete engine_;
-    }
-  }
-
-  std::string GetPrimaryKey(TSTableID table_id, TSEntityID dev_id) {
-    std::shared_ptr<kwdbts::TsTableSchemaManager> schema_mgr;
-    bool is_dropped = false;
-    KStatus s = engine_->GetTableSchemaMgr(ctx_, table_id, is_dropped, schema_mgr);
-    EXPECT_EQ(s, KStatus::SUCCESS);
-    std::vector<TagInfo> tag_schema;
-    s = schema_mgr->GetTagMeta(1, tag_schema);
-    EXPECT_EQ(s , KStatus::SUCCESS);
-    uint64_t pkey_len = 0;
-    for (size_t i = 0; i < tag_schema.size(); i++) {
-      if (tag_schema[i].isPrimaryTag()) {
-        pkey_len += tag_schema[i].m_size;
-      }
-    }
-    char* mem = reinterpret_cast<char*>(malloc(pkey_len));
-    memset(mem, 0, pkey_len);
-    std::string dev_str = intToString(dev_id);
-    size_t offset = 0;
-    for (size_t i = 0; i < tag_schema.size(); i++) {
-      if (tag_schema[i].isPrimaryTag()) {
-        if (tag_schema[i].m_data_type == DATATYPE::VARSTRING) {
-          memcpy(mem + offset, dev_str.data(), dev_str.length());
-        } else {
-          memcpy(mem + offset, (char*)(&dev_id), tag_schema[i].m_size);
-        }
-        offset += tag_schema[i].m_size;
-      }
-    }
-    auto ret = std::string{mem, pkey_len};
-    free(mem);
-    return ret;
-  }
 
   void CheckRowCount(std::shared_ptr<TsTableSchemaManager> table_schema_mgr, std::shared_ptr<TsVGroup>& entity_v_group, uint32_t entity_id, KwTsSpan& ts_span, uint64_t expect) {
     TsStorageIterator* ts_iter;
@@ -96,9 +37,10 @@ class TestV2DeleteTest : public ::testing::Test {
     std::vector<BlockFilter> block_filter = {};
     std::vector<k_int32> agg_extend_cols = {};
     std::vector<timestamp64> ts_points = {};
+    FillParams fill_params;
     auto s = entity_v_group->GetIterator(ctx_, table_schema_mgr->GetCurrentVersion(), entity_ids, ts_spans, block_filter,
                         scan_cols, scan_cols, agg_extend_cols, scan_agg_types, table_schema_mgr,
-                        schema, &ts_iter, entity_v_group, ts_points, false, false);
+                        schema, &ts_iter, entity_v_group, ts_points, false, false, UINT64_MAX, fill_params);
     ASSERT_EQ(s, KStatus::SUCCESS);
 
     ResultSet res{(k_uint32) scan_cols.size()};

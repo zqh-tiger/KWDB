@@ -9,6 +9,7 @@
 // MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 // See the Mulan PSL v2 for more details.
 #include "libkwdbts2.h"
+#include "ts_test_base.h"
 #include "ts_engine.h"
 #include "test_util.h"
 #include "../../mmap/include/mmap/mmap_ptag_hash_index.h"
@@ -27,31 +28,15 @@ class TestMMapHashIndex : public :: MMapPTagHashIndex {
   ~TestMMapHashIndex() {};
 };
 
-class TestEngine : public ::testing::Test {
+class TestEngine : public TsEngineTestBase {
  public:
-  kwdbContext_t context_;
-  kwdbContext_p ctx_;
-  EngineOptions opts_;
-  TSEngineImpl* ts_engine_;
-
   TestEngine() {
-    ctx_ = &context_;
-    InitServerKWDBContext(ctx_);
+    EngineOptions::is_single_node_ = true;
+    ctx_ = &g_ctx_;
+    auto s = InitServerKWDBContext(ctx_);
+    EXPECT_EQ(s, KStatus::SUCCESS);
     opts_.wal_level = 0;
-    opts_.db_path = kDbPath;
-    opts_.is_single_node_ = true;
-
-    fs::remove_all(kDbPath);
-    // Clean up file directory
-    auto engine = new TSEngineImpl(opts_);
-    KStatus s = engine->Init(ctx_);
-    ts_engine_ = engine;
-  }
-
-  ~TestEngine() {
-    delete ts_engine_;
-    ts_engine_ = nullptr;
-    kwdbts::KWDBDynamicThreadPool::GetThreadPool().Stop();
+    InitEngine(kDbPath);
   }
 
   // Store in header
@@ -65,16 +50,16 @@ TEST_F(TestEngine, tagiterator) {
   ConstructRoachpbTable(&meta, cur_table_id);
 
   std::vector<RangeGroup> ranges{kTestRange};
-  auto s = ts_engine_->CreateTsTable(ctx_, cur_table_id, &meta, ranges, false);
+  auto s = engine_->CreateTsTable(ctx_, cur_table_id, &meta, ranges, false);
   ASSERT_EQ(s, KStatus::SUCCESS);
 
   std::shared_ptr<TsTable> ts_table;
   bool is_dropped = false;
-  s = ts_engine_->GetTsTable(ctx_, cur_table_id, ts_table, is_dropped);
+  s = engine_->GetTsTable(ctx_, cur_table_id, ts_table, is_dropped);
   ASSERT_EQ(s, KStatus::SUCCESS);
 
   std::shared_ptr<TsTableSchemaManager> table_schema_mgr;
-  s = ts_engine_->GetTableSchemaMgr(ctx_, cur_table_id, is_dropped, table_schema_mgr);
+  s = engine_->GetTableSchemaMgr(ctx_, cur_table_id, is_dropped, table_schema_mgr);
   ASSERT_EQ(s , KStatus::SUCCESS);
 
   const std::vector<AttributeInfo>* metric_schema{nullptr};
@@ -93,7 +78,7 @@ TEST_F(TestEngine, tagiterator) {
   uint16_t inc_entity_cnt;
   uint32_t inc_unordered_cnt = 0;
   DedupResult dedup_result{0, 0, 0, TSSlice {nullptr, 0}};
-  s = ts_engine_->PutData(ctx_, ts_id, 0, &data_value, 1, 0, &inc_entity_cnt, &inc_unordered_cnt, &dedup_result, true);
+  s = engine_->PutData(ctx_, ts_id, 0, &data_value, 1, 0, &inc_entity_cnt, &inc_unordered_cnt, &dedup_result, true);
   ASSERT_EQ(s , KStatus::SUCCESS);
   free(data_value.data);
 
@@ -104,7 +89,7 @@ TEST_F(TestEngine, tagiterator) {
   std::vector<HashIdSpan> hps;
   make_hashpoint(&hps);
   BaseEntityIterator *iter;
-  ASSERT_EQ(ts_table->GetTagIterator(ctx_, scan_tags, &hps, &iter, 1), KStatus::SUCCESS);
+  ASSERT_EQ(ts_table->GetTagIterator(ctx_, scan_tags, &hps, &iter, 1, UINT64_MAX), KStatus::SUCCESS);
 
   ResultSet res{(k_uint32) scan_tags.size()};
   k_uint32 fetch_total_count = 0;

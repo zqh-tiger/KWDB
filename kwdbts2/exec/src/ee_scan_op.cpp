@@ -19,6 +19,7 @@
 
 #include "cm_func.h"
 #include "ee_row_batch.h"
+#include "ee_event_window_helper.h"
 #include "ee_global.h"
 #include "ee_storage_handler.h"
 #include "ee_window_helper.h"
@@ -278,6 +279,7 @@ EEIteratorErrCode TableScanOperator::InitHandler(kwdbContext_p ctx) {
   handler_->Init(ctx);
   handler_->SetTagScan(static_cast<TagScanBaseOperator*>(childrens_[0]));
   handler_->SetSpans(&ts_kwspans_);
+  handler_->SetFill(&spec_->tsfill());
 
   Return(ret);
 }
@@ -290,6 +292,8 @@ EEIteratorErrCode TableScanOperator::InitHelper(kwdbContext_p ctx) {
     helper_ = KNEW CountWindowHelper(this);
   } else if (thd->wtyp_ == WindowGroupType::EE_WGT_TIME) {
     helper_ = KNEW TimeWindowHelper(this);
+  } else if (thd->wtyp_ == WindowGroupType::EE_WGT_EVENT) {
+    helper_ = KNEW EventWindowHelper(this);
   } else {
     helper_ = KNEW ScanHelper(this);
   }

@@ -10,77 +10,18 @@
 // See the Mulan PSL v2 for more details.
 
 #include "test_util.h"
+#include "ts_test_base.h"
 #include "ts_engine.h"
 #include "ts_table.h"
 
 using namespace kwdbts;  // NOLINT
 
 const string engine_root_path = "./tsdb";
-class TestTsTableMaxTSV2 : public ::testing::Test {
- public:
-  EngineOptions opts_;
-  TSEngineImpl *engine_;
-  kwdbContext_t g_ctx_;
-  kwdbContext_p ctx_;
-
-  virtual void SetUp() override {
-    ctx_ = &g_ctx_;
-    InitKWDBContext(ctx_);
-    KWDBDynamicThreadPool::GetThreadPool().Init(8, ctx_);
-  }
-
-  virtual void TearDown() override {
-    KWDBDynamicThreadPool::GetThreadPool().Stop();
-  }
-
+class TestTsTableMaxTSV2 : public TsEngineTestBase {
  public:
   TestTsTableMaxTSV2() {
-    ctx_ = &g_ctx_;
-    InitKWDBContext(ctx_);
-    opts_.db_path = engine_root_path;
-    Remove(engine_root_path);
-    MakeDirectory(engine_root_path);
-    engine_ = new TSEngineImpl(opts_);
-    auto s = engine_->Init(ctx_);
-    EXPECT_EQ(s, KStatus::SUCCESS);
-  }
-
-  ~TestTsTableMaxTSV2() {
-    if (engine_) {
-      delete engine_;
-    }
-  }
-  std::string GetPrimaryKey(TSTableID table_id, TSEntityID dev_id) {
-    std::shared_ptr<kwdbts::TsTableSchemaManager> schema_mgr;
-    bool is_dropped = false;
-    KStatus s = engine_->GetTableSchemaMgr(ctx_, table_id, is_dropped, schema_mgr);
-    EXPECT_EQ(s, KStatus::SUCCESS);
-    std::vector<TagInfo> tag_schema;
-    s = schema_mgr->GetTagMeta(1, tag_schema);
-    EXPECT_EQ(s , KStatus::SUCCESS);
-    uint64_t pkey_len = 0;
-    for (size_t i = 0; i < tag_schema.size(); i++) {
-      if (tag_schema[i].isPrimaryTag()) {
-        pkey_len += tag_schema[i].m_size;
-      }
-    }
-    char* mem = reinterpret_cast<char*>(malloc(pkey_len));
-    memset(mem, 0, pkey_len);
-    std::string dev_str = intToString(dev_id);
-    size_t offset = 0;
-    for (size_t i = 0; i < tag_schema.size(); i++) {
-      if (tag_schema[i].isPrimaryTag()) {
-        if (tag_schema[i].m_data_type == DATATYPE::VARSTRING) {
-          memcpy(mem + offset, dev_str.data(), dev_str.length());
-        } else {
-          memcpy(mem + offset, (char*)(&dev_id), tag_schema[i].m_size);
-        }
-        offset += tag_schema[i].m_size;
-      }
-    }
-    auto ret = std::string{mem, pkey_len};
-    free(mem);
-    return ret;
+    InitContext();
+    InitEngine(engine_root_path);
   }
 };
 
@@ -120,7 +61,7 @@ TEST_F(TestTsTableMaxTSV2, InsertOneRecord) {
 
   timestamp64 ts;
   EntityResultIndex entity_id;
-  s = ts_table->GetLastRowEntity(ctx_, entity_id, ts);
+  s = ts_table->GetLastRowEntity(ctx_, entity_id, ts, UINT64_MAX);
   EXPECT_EQ(s, KStatus::SUCCESS);
   EXPECT_EQ(entity_id.entityGroupId, 1);
   EXPECT_GE(entity_id.subGroupId, 1);
@@ -168,7 +109,7 @@ TEST_F(TestTsTableMaxTSV2, InsertManyTags) {
 
   timestamp64 ts;
   EntityResultIndex entity_id;
-  s = ts_table->GetLastRowEntity(ctx_, entity_id, ts);
+  s = ts_table->GetLastRowEntity(ctx_, entity_id, ts, UINT64_MAX);
   EXPECT_EQ(s, KStatus::SUCCESS);
   EXPECT_EQ(entity_id.entityGroupId, 1);
   EXPECT_GE(entity_id.subGroupId, 1);
@@ -216,7 +157,7 @@ TEST_F(TestTsTableMaxTSV2, InsertManyTags1) {
 
   timestamp64 ts;
   EntityResultIndex entity_id;
-  s = ts_table->GetLastRowEntity(ctx_, entity_id, ts);
+  s = ts_table->GetLastRowEntity(ctx_, entity_id, ts, UINT64_MAX);
   EXPECT_EQ(s, KStatus::SUCCESS);
   EXPECT_EQ(entity_id.entityGroupId, 1);
   EXPECT_GE(entity_id.subGroupId, 1);
@@ -265,7 +206,7 @@ TEST_F(TestTsTableMaxTSV2, restart) {
 
   timestamp64 ts1;
   EntityResultIndex entity_id1;
-  s = ts_table1->GetLastRowEntity(ctx_, entity_id1, ts1);
+  s = ts_table1->GetLastRowEntity(ctx_, entity_id1, ts1, UINT64_MAX);
   EXPECT_EQ(s, KStatus::SUCCESS);
   EXPECT_EQ(entity_id1.entityGroupId, 1);
   EXPECT_GE(entity_id1.subGroupId, 1);
@@ -283,7 +224,7 @@ TEST_F(TestTsTableMaxTSV2, restart) {
 
   timestamp64 ts2;
   EntityResultIndex entity_id2;
-  s = ts_table2->GetLastRowEntity(ctx_, entity_id2, ts2);
+  s = ts_table2->GetLastRowEntity(ctx_, entity_id2, ts2, UINT64_MAX);
   EXPECT_EQ(s, KStatus::SUCCESS);
   EXPECT_EQ(entity_id2.entityGroupId, entity_id1.entityGroupId);
   EXPECT_EQ(entity_id2.subGroupId, entity_id1.subGroupId);
@@ -330,7 +271,7 @@ TEST_F(TestTsTableMaxTSV2, deleteSomeData) {
 
   timestamp64 ts1;
   EntityResultIndex entity_id1;
-  s = ts_table->GetLastRowEntity(ctx_, entity_id1, ts1);
+  s = ts_table->GetLastRowEntity(ctx_, entity_id1, ts1, UINT64_MAX);
   EXPECT_EQ(s, KStatus::SUCCESS);
   EXPECT_EQ(entity_id1.entityGroupId, 1);
   EXPECT_GE(entity_id1.subGroupId, 1);
@@ -348,7 +289,7 @@ TEST_F(TestTsTableMaxTSV2, deleteSomeData) {
 
   timestamp64 ts2;
   EntityResultIndex entity_id2;
-  s = ts_table->GetLastRowEntity(ctx_, entity_id2, ts2);
+  s = ts_table->GetLastRowEntity(ctx_, entity_id2, ts2, UINT64_MAX);
   EXPECT_EQ(s, KStatus::SUCCESS);
   EXPECT_EQ(entity_id2.entityGroupId, 1);
   EXPECT_GE(entity_id2.subGroupId, 1);

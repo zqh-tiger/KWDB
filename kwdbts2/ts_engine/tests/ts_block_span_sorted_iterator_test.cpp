@@ -87,6 +87,14 @@ class SimulatedTsEntityBlock : public TsBlock {
     return;
   }
 
+  void GetMinAndMaxOSN(int start_row, int row_num, uint64_t& min_osn, uint64_t& max_osn) override {
+    return;
+  }
+
+  uint64_t GetOSN(int row_num) override {
+    return 0;
+  }
+
   uint64_t GetFirstOSN() override { return KStatus::FAIL; }
 
   uint64_t GetLastOSN() override { return KStatus::FAIL; }
@@ -205,7 +213,7 @@ TEST_F(TsBlockSpanSortedIteratorTest, empty) {
 
 TEST_F(TsBlockSpanSortedIteratorTest, multiTS) {
   int ts_num = 10;
-  std::vector<DedupRule> dedup_rules = {DedupRule::KEEP, DedupRule::OVERRIDE, DedupRule::DISCARD};
+  std::vector<DedupRule> dedup_rules = {DedupRule::KEEP_EXPERIMENTAL, DedupRule::OVERRIDE, DedupRule::DISCARD};
   for (auto rule : dedup_rules) {
     uint32_t total_rows = 0;
     {
@@ -248,7 +256,7 @@ TEST_F(TsBlockSpanSortedIteratorTest, multiTS) {
 }
 
 TEST_F(TsBlockSpanSortedIteratorTest, multi_SameBlockSpan) {
-  std::vector<DedupRule> dedup_rules = {DedupRule::KEEP, DedupRule::OVERRIDE, DedupRule::DISCARD};
+  std::vector<DedupRule> dedup_rules = {DedupRule::KEEP_EXPERIMENTAL, DedupRule::OVERRIDE, DedupRule::DISCARD};
   for (auto rule : dedup_rules) {
     uint32_t total_rows = 0;
     int ts_num = 10;
@@ -271,7 +279,7 @@ TEST_F(TsBlockSpanSortedIteratorTest, multi_SameBlockSpan) {
         }
       } while (!is_finished);
       switch (rule) {
-        case DedupRule::KEEP:
+        case DedupRule::KEEP_EXPERIMENTAL:
           EXPECT_TRUE(total_rows == span_num * ts_num);
           break;
         case DedupRule::OVERRIDE:
@@ -307,7 +315,7 @@ TEST_F(TsBlockSpanSortedIteratorTest, multi_SameBlockSpan) {
         }
       } while (!is_finished);
       switch (rule) {
-        case DedupRule::KEEP:
+        case DedupRule::KEEP_EXPERIMENTAL:
           EXPECT_TRUE(total_rows == span_num * ts_num);
           break;
         case DedupRule::OVERRIDE:
@@ -327,7 +335,7 @@ TEST_F(TsBlockSpanSortedIteratorTest, multi_SameBlockSpan) {
 }
 
 TEST_F(TsBlockSpanSortedIteratorTest, multiBlockSpanWithCrossData) {
-  std::vector<DedupRule> dedup_rules = {DedupRule::KEEP, DedupRule::OVERRIDE, DedupRule::DISCARD};
+  std::vector<DedupRule> dedup_rules = {DedupRule::KEEP_EXPERIMENTAL, DedupRule::OVERRIDE, DedupRule::DISCARD};
   for (auto rule : dedup_rules) {
     int ts_num = 10;
     int span_num = 5;
@@ -350,7 +358,7 @@ TEST_F(TsBlockSpanSortedIteratorTest, multiBlockSpanWithCrossData) {
         }
       } while (!is_finished);
       switch (rule) {
-        case DedupRule::KEEP:
+        case DedupRule::KEEP_EXPERIMENTAL:
           EXPECT_EQ(total_rows, ts_num * span_num);
           break;
         case DedupRule::OVERRIDE:
@@ -386,7 +394,7 @@ TEST_F(TsBlockSpanSortedIteratorTest, multiBlockSpanWithCrossData) {
         }
       } while (!is_finished);
       switch (rule) {
-        case DedupRule::KEEP:
+        case DedupRule::KEEP_EXPERIMENTAL:
           EXPECT_EQ(total_rows, ts_num * span_num);
           break;
         case DedupRule::OVERRIDE:
@@ -406,7 +414,7 @@ TEST_F(TsBlockSpanSortedIteratorTest, multiBlockSpanWithCrossData) {
 }
 
 TEST_F(TsBlockSpanSortedIteratorTest, preAgg) {
-  std::vector<DedupRule> dedup_rules = {DedupRule::KEEP, DedupRule::OVERRIDE, DedupRule::DISCARD};
+  std::vector<DedupRule> dedup_rules = {DedupRule::KEEP_EXPERIMENTAL, DedupRule::OVERRIDE, DedupRule::DISCARD};
   std::vector<int> total_row_count = {220, 120, 120};
   for (int i = 0; i < 3; ++i) {
     DedupRule rule = dedup_rules[i];

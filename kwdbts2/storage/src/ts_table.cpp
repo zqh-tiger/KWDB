@@ -22,42 +22,23 @@
 #include "ee_global.h"
 #include "payload_builder.h"
 
-extern bool g_go_start_service;
 namespace kwdbts {
 
 KStatus TsTable::GetLastRowBatch(kwdbContext_p ctx, uint32_t table_version, std::vector<uint32_t> scan_cols,
-                               ResultSet* res, k_uint32* count, bool& valid) {
+                                TS_OSN osn, ResultSet* res, k_uint32* count, bool& valid) {
   return KStatus::SUCCESS;
-}
-
-TsTable::TsTable() {
-  is_dropped_.store(false);
 }
 
 TsTable::TsTable(kwdbContext_p ctx, const string& db_path, const KTableKey& table_id)
     : db_path_(db_path), table_id_(table_id) {
   tbl_sub_path_ = std::to_string(table_id_) + "/";
   db_path_ = db_path_ + "/";
-  is_dropped_.store(false);
   entity_groups_mtx_ = new TsTableEntityGrpsRwLatch(RWLATCH_ID_TS_TABLE_ENTITYGRPS_RWLOCK);
   snapshot_manage_mtx_ = new TsTableSnapshotLatch(LATCH_ID_TSTABLE_SNAPSHOT_MUTEX);
   table_version_rw_lock_ = new TsTableVersionRwLatch(RWLATCH_ID_TABLE_VERSION_RWLOCK);
 }
 
 TsTable::~TsTable() {
-  if (is_dropped_) {
-    kwdbContext_t context;
-    kwdbContext_p ctx = &context;
-    KStatus s = InitServerKWDBContext(ctx);
-    if (s != KStatus::SUCCESS) {
-      LOG_ERROR("InitServerKWDBContext Error!");
-    }
-    // s = DropAll(ctx);
-    // if (s != KStatus::SUCCESS) {
-    //   LOG_ERROR("DropAll Error!");
-    // }
-  }
-
   if (entity_groups_mtx_) {
     delete entity_groups_mtx_;
     entity_groups_mtx_ = nullptr;
@@ -92,14 +73,7 @@ KStatus TsTable::Create(kwdbContext_p ctx, vector<AttributeInfo>& metric_schema,
       return KStatus::FAIL;
     }
   }
-
   hash_num_ = hash_num;
-  ErrorInfo err_info;
-
-  if (err_info.errcode < 0) {
-    LOG_ERROR("createTable fail, table_id[%lu], msg[%s]", table_id_, err_info.errmsg.c_str());
-  }
-
   return KStatus::SUCCESS;
 }
 
@@ -160,14 +134,6 @@ KStatus TsTable::AlterPartitionInterval(kwdbContext_p ctx, uint64_t partition_in
 
 uint64_t TsTable::GetPartitionInterval() {
   return 0;
-}
-
-void TsTable::SetDropped() {
-  is_dropped_.store(true);
-}
-
-bool TsTable::IsDropped() {
-  return is_dropped_.load();
 }
 
 uint64_t beginOfDay(uint64_t timestamp) {

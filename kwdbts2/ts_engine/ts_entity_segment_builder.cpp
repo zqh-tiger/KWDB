@@ -10,19 +10,13 @@
 // See the Mulan PSL v2 for more details.
 
 #include "ts_entity_segment_builder.h"
+
 #include <sys/types.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
-#if defined(__GNUC__) && (__GNUC__ < 8)
-  #include <experimental/filesystem>
-  namespace fs = std::experimental::filesystem;
-#else
-  #include <filesystem>
-  namespace fs = std::filesystem;
-#endif
 #include <utility>
-
 
 #include "data_type.h"
 #include "kwdb_type.h"
@@ -38,7 +32,6 @@
 #include "ts_entity_segment_handle.h"
 #include "ts_filename.h"
 #include "ts_io.h"
-#include "ts_lastsegment_builder.h"
 #include "ts_sliceguard.h"
 #include "ts_version.h"
 
@@ -80,6 +73,8 @@ KStatus TsEntitySegmentBlockItemFileBuilder::Open() {
 }
 
 KStatus TsEntitySegmentBlockItemFileBuilder::AppendBlockItem(TsEntitySegmentBlockItem& block_item) {
+  assert(block_item.source != TsDataSource::None);
+  assert(block_item.table_id != 0);
   assert((w_file_->GetFileSize() - sizeof(TsBlockItemFileHeader)) % sizeof(TsEntitySegmentBlockItem) == 0);
   block_item.block_id = (w_file_->GetFileSize() - sizeof(TsBlockItemFileHeader)) / sizeof(TsEntitySegmentBlockItem) + 1;
   KStatus s = w_file_->Append(TSSlice{reinterpret_cast<char *>(&block_item), sizeof(TsEntitySegmentBlockItem)});
@@ -109,8 +104,7 @@ KStatus TsEntitySegmentBlockFileBuilder::Open() {
 
 KStatus TsEntitySegmentBlockFileBuilder::AppendBlock(const TSSlice& block, uint64_t* offset) {
   *offset = w_file_->GetFileSize();
-  w_file_->Append(block);
-  return KStatus::SUCCESS;
+  return w_file_->Append(block);
 }
 
 KStatus TsEntitySegmentAggFileBuilder::Open() {
@@ -132,8 +126,7 @@ KStatus TsEntitySegmentAggFileBuilder::Open() {
 
 KStatus TsEntitySegmentAggFileBuilder::AppendAggBlock(const TSSlice& agg, uint64_t* offset) {
   *offset = w_file_->GetFileSize();
-  w_file_->Append(agg);
-  return SUCCESS;
+  return w_file_->Append(agg);
 }
 
 TsEntityBlockBuilder::TsEntityBlockBuilder(uint32_t table_id, uint32_t table_version, uint64_t entity_id,
@@ -290,8 +283,9 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
       TSSlice var_offsets = {block.buffer.data(), n_rows_ * sizeof(uint32_t)};
       bool ok = mgr.CompressData(var_offsets, nullptr, n_rows_, &compressed, first, second);
       if (!ok) {
-        LOG_ERROR("Compress var offset data failed");
-        return KStatus::SUCCESS;
+        LOG_ERROR("Compress var offset data failed, tb_id [%u], tb_version [%u], entity_id [%lu], col_idx [%d]",
+          table_id_, table_version_, entity_id_, col_idx);
+        return KStatus::FAIL;
       }
       uint32_t compressed_len = compressed.size();
       PutFixed32(data_buffer, compressed_len);
@@ -302,8 +296,9 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
       ok = mgr.CompressVarchar({block.buffer.data() + var_data_offset, block.buffer.size() - var_data_offset},
                                &compressed, GenCompAlg::kSnappy);
       if (!ok) {
-        LOG_ERROR("Compress var data failed");
-        return KStatus::SUCCESS;
+        LOG_ERROR("Compress var data failed, tb_id [%u], tb_version [%u], entity_id [%lu], col_idx [%d]",
+          table_id_, table_version_, entity_id_, col_idx);
+        return KStatus::FAIL;
       }
       data_buffer->append(compressed);
     } else {
@@ -355,8 +350,12 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
       AggCalculatorV2 aggCalc(block.buffer.data(), bitmap, DATATYPE(metric_schema_[col_idx - 1].type),
                               metric_schema_[col_idx - 1].size, n_rows_);
       auto is_not_null = metric_schema_[col_idx - 1].isFlag(AINFO_NOT_NULL);
-      *reinterpret_cast<bool *>(sum.data()) =  aggCalc.CalcAggForFlush(is_not_null, count, max.data(),
-                                                                       min.data(), sum.data() + 1);
+      bool is_overflow = false;
+      KStatus s = aggCalc.CalcAggForFlush(is_not_null, is_overflow, count, max.data(), min.data(), sum.data() + 1);
+      if (s != KStatus::SUCCESS) {
+        return s;
+      }
+      *reinterpret_cast<bool *>(sum.data()) = is_overflow;
       if (0 == count) {
         continue;
       }
@@ -465,7 +464,15 @@ KStatus TsEntitySegmentBuilder::UpdateEntityItem(TsEntityKey& entity_key, TsEnti
       cur_entity_item_.table_id = entity_key.table_id;
     }
   }
-  block_item.prev_block_id = cur_entity_item_.cur_block_id;
+  if (cur_entity_item_.table_id == entity_key.table_id) {
+    block_item.prev_block_id = cur_entity_item_.cur_block_id;
+    block_item.source = source_;
+    block_item.table_id = cur_entity_item_.table_id;
+  } else {
+    cur_entity_item_ = {};
+    cur_entity_item_.entity_id = entity_key.entity_id;
+    cur_entity_item_.table_id = entity_key.table_id;
+  }
   s = block_item_builder_->AppendBlockItem(block_item);
   if (s != KStatus::SUCCESS) {
     LOG_ERROR("TsEntitySegmentBuilder::Compact failed, append block item failed.")
@@ -503,12 +510,14 @@ KStatus TsEntitySegmentBuilder::WriteBlock(TsEntityKey& entity_key, TsSegmentWri
   s = agg_file_builder_->AppendAggBlock({agg_buffer.data(), agg_buffer.size()}, &block_item.agg_offset);
   if (s != KStatus::SUCCESS) {
     LOG_ERROR("TsEntitySegmentBuilder::Compact failed, append agg block failed.")
+    return s;
   }
   s = UpdateEntityItem(entity_key, block_item);
   if (s != KStatus::SUCCESS) {
     LOG_ERROR("TsEntitySegmentBuilder::Compact failed, update entity item failed.")
+    return s;
   }
-  return s;
+  return SUCCESS;
 }
 
 KStatus TsEntitySegmentBuilder::Open() {
@@ -530,8 +539,9 @@ KStatus TsEntitySegmentBuilder::Open() {
   s = agg_file_builder_->Open();
   if (s != KStatus::SUCCESS) {
     LOG_ERROR("Open Agg File Failed");
+    return s;
   }
-  return s;
+  return SUCCESS;
 }
 
 KStatus TsEntitySegmentBuilder::WriteCachedBlockSpan(bool call_by_vacuum, TsEntityKey& entity_key,
@@ -614,26 +624,26 @@ KStatus TsEntitySegmentBuilder::Compact(bool call_by_vacuum, TsVersionUpdate* up
     }
     TsEntityKey cur_entity_key = {block_span->GetTableID(), block_span->GetTableVersion(), block_span->GetEntityID()};
     if (entity_key == TsEntityKey{}) {
-      entity_key = cur_entity_key;
-      stats->written_devices++;
       std::shared_ptr<TsTableSchemaManager> tbl_schema_mgr = nullptr;
-      s = schema_manager_->GetTableSchemaMgr(entity_key.table_id, tbl_schema_mgr);
+      bool is_dropped = false;
+      s = schema_manager_->GetTableSchemaMgr(cur_entity_key.table_id, tbl_schema_mgr, &is_dropped);
       if (s == FAIL) {
-        if (tbl_schema_mgr == nullptr) {
-          LOG_INFO("table %lu was dropped, ignore it.", entity_key.table_id);
+        if (is_dropped) {
+          LOG_INFO("table %lu was dropped, ignore it.", cur_entity_key.table_id);
           continue;
         }
-        LOG_ERROR("can not get table schema manager for table_id[%lu].", entity_key.table_id);
         return s;
       }
-      std::shared_ptr<MMapMetricsTable> table_schema_;
-      s = schema_manager_->GetTableMetricSchema({}, entity_key.table_id, entity_key.table_version, &table_schema_);
+      entity_key = cur_entity_key;
+      stats->written_devices++;
+      std::shared_ptr<MMapMetricsTable> table_schema;
+      s = tbl_schema_mgr->GetMetricSchema(entity_key.table_version, &table_schema);
       if (s != KStatus::SUCCESS) {
         LOG_ERROR("get table schema failed. table id: %lu, table version: %u.", block_span->GetTableID(),
                   block_span->GetTableVersion());
         return s;
       }
-      std::vector<AttributeInfo> metric_schema = *table_schema_->getSchemaInfoExcludeDroppedPtr();
+      std::vector<AttributeInfo> metric_schema = *table_schema->getSchemaInfoExcludeDroppedPtr();
       block_ = std::make_shared<TsEntityBlockBuilder>(entity_key.table_id, entity_key.table_version,
                                                       entity_key.entity_id, metric_schema);
     }
@@ -651,25 +661,24 @@ KStatus TsEntitySegmentBuilder::Compact(bool call_by_vacuum, TsVersionUpdate* up
 
     std::vector<AttributeInfo> metric_schema;
     if (entity_key.table_id != cur_entity_key.table_id || entity_key.table_version != cur_entity_key.table_version) {
+      bool is_dropped = false;
       std::shared_ptr<TsTableSchemaManager> tbl_schema_mgr = nullptr;
-      s = schema_manager_->GetTableSchemaMgr(cur_entity_key.table_id, tbl_schema_mgr);
+      s = schema_manager_->GetTableSchemaMgr(cur_entity_key.table_id, tbl_schema_mgr, &is_dropped);
       if (s == FAIL) {
-        if (tbl_schema_mgr == nullptr) {
+        if (is_dropped) {
           LOG_INFO("table %lu was dropped, ignore it.", cur_entity_key.table_id);
           continue;
         }
-        LOG_ERROR("can not get table schema manager for table_id[%lu].", cur_entity_key.table_id);
         return s;
       }
-      std::shared_ptr<MMapMetricsTable> table_schema_;
-      s = schema_manager_->GetTableMetricSchema({}, cur_entity_key.table_id, cur_entity_key.table_version,
-                                                &table_schema_);
+      std::shared_ptr<MMapMetricsTable> table_schema;
+      s = tbl_schema_mgr->GetMetricSchema(cur_entity_key.table_version, &table_schema);
       if (s != KStatus::SUCCESS) {
         LOG_ERROR("get table schema failed. table id: %lu, table version: %u.", cur_entity_key.table_id,
                   cur_entity_key.table_version);
         return s;
       }
-      metric_schema = *table_schema_->getSchemaInfoExcludeDroppedPtr();
+      metric_schema = *table_schema->getSchemaInfoExcludeDroppedPtr();
       block_ = std::make_shared<TsEntityBlockBuilder>(cur_entity_key.table_id, cur_entity_key.table_version,
                                                       cur_entity_key.entity_id, metric_schema);
     } else {
@@ -805,8 +814,11 @@ KStatus TsEntitySegmentBuilder::WriteBatch(TSTableID tbl_id, uint32_t entity_id,
   s = agg_file_builder_->AppendAggBlock(agg_buffer, &block_item.agg_offset);
   if (s != KStatus::SUCCESS) {
     LOG_ERROR("TsEntitySegmentBuilder::WriteBatch failed, append agg block failed.")
+    return s;
   }
 
+  block_item.source = source_;
+  block_item.table_id = tbl_id;
   s = block_item_builder_->AppendBlockItem(block_item);
   if (s != KStatus::SUCCESS) {
     LOG_ERROR("TsEntitySegmentBuilder::WriteBatch failed, append block item failed.")
@@ -909,8 +921,10 @@ void TsEntitySegmentBuilder::WriteBatchCancel() {
   entity_item_builder_->MarkDelete();
 }
 
-TsEntitySegmentVacuumer::TsEntitySegmentVacuumer(const std::string& root_path, TsVersionManager* version_manager)
-    : root_path_(root_path), version_manager_(version_manager) {
+TsEntitySegmentVacuumer::TsEntitySegmentVacuumer(const std::string& root_path,
+                                                 TsVersionManager* version_manager,
+                                                 TsDataSource source)
+    : root_path_(root_path), version_manager_(version_manager), source_(source) {
   // entity header file
   TsIOEnv* env = &TsIOEnv::GetInstance();
   fs::path root(root_path);
@@ -956,8 +970,9 @@ KStatus TsEntitySegmentVacuumer::Open() {
   s = agg_file_builder_->Open();
   if (s != KStatus::SUCCESS) {
     LOG_ERROR("Open Agg File Failed");
+    return s;
   }
-  return s;
+  return SUCCESS;
 }
 
 void TsEntitySegmentVacuumer::Cancel() {
@@ -980,6 +995,7 @@ KStatus TsEntitySegmentVacuumer::AppendAgg(const TSSlice& agg, uint64_t* offset)
 }
 
 KStatus TsEntitySegmentVacuumer::AppendBlockItem(TsEntitySegmentBlockItem& block_item) {
+  block_item.source = source_;
   return block_item_builder_->AppendBlockItem(block_item);
 }
 

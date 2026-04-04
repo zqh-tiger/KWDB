@@ -140,6 +140,8 @@ class TsMemSegment : public TsSegmentBase, public enable_shared_from_this<TsMemS
 
   inline uint32_t GetMemSegmentSize() { return skiplist_.GetAllocator().MemoryAllocatedBytes(); }
 
+  KStatus GetMaxOSN(uint32_t db_id, TSTableID table_id, TSEntityID entity_id, const KwTsSpan& span, TS_OSN& max_osn);
+
   KStatus GetBlockSpans(const TsBlockItemFilterParams& filter, std::list<shared_ptr<TsBlockSpan>>& blocks,
                         const std::shared_ptr<TsTableSchemaManager>& tbl_schema_mgr,
                         const std::shared_ptr<MMapMetricsTable>& scan_schema,
@@ -234,6 +236,24 @@ class TsMemSegBlock : public TsBlock {
         max_osn = row->GetOSN();
       }
     }
+  }
+
+  void GetMinAndMaxOSN(int start_row, int row_num, uint64_t& min_osn, uint64_t& max_osn) override {
+    assert(row_data_.size() > 0);
+    assert(start_row + row_num <= row_data_.size());
+    for (int i = start_row; i < start_row + row_num; ++i) {
+      if (row_data_[i]->GetOSN() < min_osn) {
+        min_osn = row_data_[i]->GetOSN();
+      }
+      if (row_data_[i]->GetOSN() > max_osn) {
+        max_osn = row_data_[i]->GetOSN();
+      }
+    }
+  }
+
+  uint64_t GetOSN(int row_num) {
+    assert(row_data_.size() > row_num);
+    return row_data_[row_num]->GetOSN();
   }
 
   uint64_t GetFirstOSN() override {

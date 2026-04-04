@@ -365,6 +365,33 @@ bool TsMemSegment::GetAllEntityRows(std::list<const TSMemSegRowData*>* rows) {
   return true;
 }
 
+KStatus TsMemSegment::GetMaxOSN(uint32_t db_id, TSTableID table_id, TSEntityID entity_id,
+                                const KwTsSpan& span, TS_OSN& max_osn) {
+  max_osn = 0;
+  if (0 == intent_row_num_.load()) {
+    return KStatus::SUCCESS;
+  }
+  SkiplistIterator iter(&skiplist_);
+  TSMemSegRowData key_begin(db_id, table_id, 0, entity_id);
+  key_begin.SetData(span.begin, 0);
+  iter.Seek(&key_begin);
+  while (iter.Valid()) {
+    const TSMemSegRowData* row_data = skiplist_.ParseKey(iter.key());
+    if (row_data->GetTableId() != table_id) {
+      break;
+    }
+    if (row_data->GetEntityId() != entity_id) {
+      break;
+    }
+    if (row_data->GetTS() > span.end) {
+      break;
+    }
+    max_osn = std::max(max_osn, row_data->GetOSN());
+    iter.Next();
+  }
+  return KStatus::SUCCESS;
+}
+
 KStatus TsMemSegment::GetBlockSpans(std::list<shared_ptr<TsBlockSpan>>& blocks, TsEngineSchemaManager* schema_mgr) {
   if (0 == intent_row_num_.load(std::memory_order_relaxed)) {
     return KStatus::SUCCESS;
@@ -568,19 +595,21 @@ KStatus TsMemSegment::GetBlockSpans(std::list<shared_ptr<TsBlockSpan>>& blocks, 
     auto table_id = mem_blk->GetTableId();
     auto version = mem_blk->GetTableVersion();
     std::shared_ptr<TsTableSchemaManager> tbl_schema_mgr = nullptr;
-    auto s = schema_mgr->GetTableSchemaMgr(table_id, tbl_schema_mgr);
+    bool is_dropped = false;
+    auto s = schema_mgr->GetTableSchemaMgr(table_id, tbl_schema_mgr, &is_dropped);
     if (s == FAIL) {
-      if (tbl_schema_mgr == nullptr) {
+      if (is_dropped) {
         LOG_INFO("table %lu was dropped, ignore it.", table_id);
         continue;
       }
       LOG_ERROR("can not get table schema manager for table_id[%lu].", table_id);
-      return s;
+      return FAIL;
     }
     std::shared_ptr<MMapMetricsTable> scan_metric = nullptr;
     s = tbl_schema_mgr->GetMetricSchema(version, &scan_metric);
     if (s != SUCCESS) {
-      LOG_ERROR("GetMetricSchema failed. table id [%u], table version [%lu]", version, table_id);
+      LOG_ERROR("GetMetricSchema failed. table id [%lu], table version [%u]",  table_id, version);
+      return s;
     }
     blocks.push_back(std::make_shared<TsBlockSpan>(0, mem_blk->GetEntityId(), std::move(mem_blk), 0, mem_blk->GetRowNum(),
                                                    empty_convert, scan_metric));
