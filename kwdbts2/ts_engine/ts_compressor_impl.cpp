@@ -1024,7 +1024,6 @@ bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, 
 
 bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, GenCompAlg alg) const {
   assert(sizeof(alg) == sizeof(uint16_t));
-  output->clear();
   PutFixed16(output, static_cast<uint16_t>(alg));
   auto it = general_compressor_.find(alg);
   if (it == general_compressor_.end()) {
