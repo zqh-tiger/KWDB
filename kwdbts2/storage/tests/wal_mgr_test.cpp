@@ -16,8 +16,6 @@
 
 #include "../../ts_engine/tests/test_util.h"
 
-namespace fs = std::filesystem;
-
 class TestWALMgr : public ::testing::Test {
  protected:
   kwdbContext_t context_;
