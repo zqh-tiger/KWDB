@@ -81,13 +81,9 @@ TEST_F(TestWALMgr, TestWALMgr_ConstructorUserDefinedPath) {
 // WALMgr Initialization Tests
 // ============================================================================
 
-TEST_F(TestWALMgr, TestWALMgr_InitAndCreate) {
+TEST_F(TestWALMgr, TestWALMgr_Init) {
   WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
   ASSERT_NE(wal_mgr, nullptr);
-  
-  // Test Create
-  KStatus create_result = wal_mgr->Create(ctx_);
-  EXPECT_EQ(create_result, KStatus::SUCCESS);
   
   // Test Init
   KStatus init_result = wal_mgr->Init(ctx_);
@@ -103,10 +99,6 @@ TEST_F(TestWALMgr, TestWALMgr_InitAndCreate) {
 TEST_F(TestWALMgr, TestWALMgr_InitForChk) {
   WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
   ASSERT_NE(wal_mgr, nullptr);
-  
-  // First create and init normally
-  KStatus create_result = wal_mgr->Create(ctx_);
-  EXPECT_EQ(create_result, KStatus::SUCCESS);
   
   KStatus init_result = wal_mgr->Init(ctx_);
   EXPECT_EQ(init_result, KStatus::SUCCESS);
