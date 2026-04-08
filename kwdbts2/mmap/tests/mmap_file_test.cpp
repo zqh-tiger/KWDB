@@ -567,8 +567,8 @@ TEST_F(TestMMapStringColumn, Remove_DeleteFile) {
 TEST_F(TestMMapStringColumn, PushBack_HexBinaryData) {
   ASSERT_GE(str_col_->open("string_col.dat", test_file_path_, O_RDWR | O_CREAT), 0);
 
-  std::vector<uint8_t> binary_data = {0xDE, 0xAD, 0xBE, 0xEF};
-  size_t loc = str_col_->push_back_hexbinary(binary_data.data(), binary_data.size());
+  const char* hex_string = "DEADBEEF";
+  size_t loc = str_col_->push_back_hexbinary(hex_string, strlen(hex_string));
 
   EXPECT_GT(loc, 0);
 }
