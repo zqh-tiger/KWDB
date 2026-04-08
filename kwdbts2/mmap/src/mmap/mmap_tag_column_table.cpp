@@ -256,6 +256,12 @@ MMapTagColumnTable::MMapTagColumnTable() {
   m_ntag_indexes_rw_lock_ = new NTagIndexsRWLatch(RWLATCH_ID_NTAG_INDEXES_RWLATCH);
 }
 MMapTagColumnTable::~MMapTagColumnTable() {
+  for (auto idx_file : m_ntag_indexes_) {
+    if (idx_file) {
+      delete idx_file;
+      idx_file = nullptr;
+    }
+  }
   delete m_tag_table_rw_lock_;
   delete m_tag_table_mutex_;
   delete m_ref_cnt_mtx_;
