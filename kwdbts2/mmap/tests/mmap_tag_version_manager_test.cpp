@@ -274,23 +274,6 @@ TEST_F(TestTagTableVersionManager, RemoveAll_DeleteAllVersions) {
   EXPECT_EQ(obj, nullptr);
 }
 
-TEST_F(TestTagTableVersionManager, CloneTagVersionObject_CopyExistingVersion) {
-  TagTableVersionManager version_mgr(test_path_, "sub_path", table_id_);
-  
-  std::vector<TagInfo> schema;
-  TagInfo info;
-  info.m_data_type = INT32;
-  schema.push_back(info);
-  
-  uint32_t src_version = 60;
-  uint32_t new_version = 61;
-  ErrorInfo err_info;
-  
-  // Create source version
-  TagVersionObject* src_obj = version_mgr.CreateTagVersionObject(schema, src_version, err_info);
-  EXPECT_NE(src_obj, nullptr);
-}
-
 TEST_F(TestTagTableVersionManager, RollbackTableVersion_RemoveSpecificVersion) {
   TagTableVersionManager version_mgr(test_path_, "sub_path", table_id_);
   

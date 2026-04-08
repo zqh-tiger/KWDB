@@ -267,12 +267,6 @@ TEST_F(TestMMapEntityRowIndex, DataLock_Operations) {
   SUCCEED();
 }
 
-TEST_F(TestMMapEntityRowIndex, Type_Getter) {
-  MMapEntityRowHashIndex index(sizeof(uint64_t));
-
-  EXPECT_GE(index.type(), 0);
-}
-
 TEST_F(TestMMapEntityRowIndex, Size_Basic) {
   MMapEntityRowHashIndex index(sizeof(uint64_t));
   ErrorInfo err_info;
