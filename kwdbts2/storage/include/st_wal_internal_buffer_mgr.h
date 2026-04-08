@@ -172,7 +172,7 @@ class WALBufferMgr {
 
     uint64_t new_block_no = currentBlock_->getBlockNo();
     currentBlock_->reset(new_block_no);
-    
+
     return SUCCESS;
   }
 
