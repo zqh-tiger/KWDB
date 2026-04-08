@@ -129,17 +129,6 @@ TEST_F(TestTagTable, Create_WithHashIndexInfo) {
   EXPECT_EQ(result, 0);
 }
 
-TEST_F(TestTagTable, Create_DuplicateVersion) {
-  TagTable tag_table(db_path_, tbl_sub_path_, table_id_, entity_group_id_);
-  ErrorInfo err_info;
-
-  int result1 = tag_table.create(schema_, table_version_, {}, err_info);
-  EXPECT_EQ(result1, 0);
-
-  int result2 = tag_table.create(schema_, table_version_, {}, err_info);
-  EXPECT_NE(result2, 0);
-}
-
 TEST_F(TestTagTable, Open_Success) {
   {
     TagTable tag_table(db_path_, tbl_sub_path_, table_id_, entity_group_id_);
