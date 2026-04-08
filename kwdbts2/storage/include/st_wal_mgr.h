@@ -449,6 +449,7 @@ class WALMgr {
   using WALMgrLatch = KLatch;
   WALMgrLatch* meta_mutex_;
   bool read_chk_;
+  char meta_flush_buf_[sizeof(WALMeta)];
 //  TsVGroup* vg_{nullptr};
 };
 }  // namespace kwdbts
