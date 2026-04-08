@@ -9,7 +9,6 @@
 // MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 // See the Mulan PSL v2 for more details.
 
-#include <filesystem>
 #include "libkwdbts2.h"
 #include "st_wal_mgr.h"
 #include "st_wal_internal_log_structure.h"
