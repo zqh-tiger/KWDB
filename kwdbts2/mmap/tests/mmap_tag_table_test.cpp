@@ -20,6 +20,7 @@
 
 #include "../include/mmap/mmap_tag_table.h"
 #include "mmap/mmap_tag_version_manager.h"
+#include "mmap/mmap_tag_column_table_aux.h"
 #include "ts_common.h"
 
 class TestTagTable : public testing::Test {
@@ -705,5 +706,70 @@ TEST_F(TestTagPartitionTableManager, CreateTagPartitionTable_Duplicate) {
 
   int result = part_mgr.CreateTagPartitionTable(schema_, table_version_, err_info);
 
+  EXPECT_EQ(result, 0);
+}
+
+TEST_F(TestTagTable, InsertForUndo_RecordNotExist) {
+  TagTable tag_table(db_path_, tbl_sub_path_, table_id_, entity_group_id_);
+  ErrorInfo err_info;
+  ASSERT_EQ(CreateTagTableWithData(&tag_table, err_info), 0);
+
+  char primary_tag_data[] = "nonexistent_key";
+  TSSlice primary_tag{primary_tag_data, strlen(primary_tag_data)};
+  
+  int result = tag_table.InsertForUndo(1, 1, primary_tag, 100);
+  
+  EXPECT_EQ(result, 0);
+}
+
+TEST_F(TestTagTable, InsertForRedo_RecordNotExist) {
+  TagTable tag_table(db_path_, tbl_sub_path_, table_id_, entity_group_id_);
+  ErrorInfo err_info;
+  ASSERT_EQ(CreateTagTableWithData(&tag_table, err_info), 0);
+
+  std::vector<AttributeInfo> schema;
+  AttributeInfo attr;
+  attr.id = 1;
+  attr.type = DATATYPE::STRING;
+  attr.size = 64;
+  attr.length = 64;
+  schema.push_back(attr);
+
+  std::vector<uint8_t> payload_data(256, 0);
+  TSSlice payload_slice{reinterpret_cast<char*>(payload_data.data()), payload_data.size()};
+  kwdbts::Payload payload(schema, payload_slice);
+  
+  int result = tag_table.InsertForRedo(1, 1, payload);
+  
+  EXPECT_GE(result, 0);
+}
+
+TEST_F(TestTagTable, DeleteForUndo_TagPackNull) {
+  TagTable tag_table(db_path_, tbl_sub_path_, table_id_, entity_group_id_);
+  ErrorInfo err_info;
+  ASSERT_EQ(CreateTagTableWithData(&tag_table, err_info), 0);
+
+  char primary_tag_data[] = "test_key";
+  TSSlice primary_tag{primary_tag_data, strlen(primary_tag_data)};
+  TSSlice tag_pack{nullptr, 0};
+  
+  int result = tag_table.DeleteForUndo(1, 1, 100, primary_tag, tag_pack, 100);
+  
+  EXPECT_LT(result, 0);
+}
+
+TEST_F(TestTagTable, DeleteForRedo_RecordNotExist) {
+  TagTable tag_table(db_path_, tbl_sub_path_, table_id_, entity_group_id_);
+  ErrorInfo err_info;
+  ASSERT_EQ(CreateTagTableWithData(&tag_table, err_info), 0);
+
+  char primary_tag_data[] = "nonexistent_key";
+  TSSlice primary_tag{primary_tag_data, strlen(primary_tag_data)};
+  
+  std::vector<uint8_t> tag_data(128, 0);
+  TSSlice tag_pack{reinterpret_cast<char*>(tag_data.data()), tag_data.size()};
+  
+  int result = tag_table.DeleteForRedo(1, 1, primary_tag, tag_pack, 100);
+  
   EXPECT_EQ(result, 0);
 }
