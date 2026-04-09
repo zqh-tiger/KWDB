@@ -662,15 +662,12 @@ TEST_F(TestWALMgr, TestWALMgr_WriteCheckpointWAL_WithPartitions) {
   EXPECT_EQ(init_result, KStatus::SUCCESS);
   
   CheckpointPartition partitions[3];
-  partitions[0].partition_id = 1;
-  partitions[0].start_offset = 0;
-  partitions[0].row_count = 100;
-  partitions[1].partition_id = 2;
-  partitions[1].start_offset = 100;
-  partitions[1].row_count = 200;
-  partitions[2].partition_id = 3;
-  partitions[2].start_offset = 300;
-  partitions[2].row_count = 150;
+  partitions[0].time_partition = 1;
+  partitions[0].offset = 0;
+  partitions[1].time_partition = 2;
+  partitions[1].offset = 100;
+  partitions[2].time_partition = 3;
+  partitions[2].offset = 300;
   
   TS_OSN entry_lsn;
   KStatus checkpoint_result = wal_mgr->WriteCheckpointWAL(ctx_, 2002, 500, 3, partitions, entry_lsn);
