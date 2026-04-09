@@ -53,7 +53,6 @@ void EntryBlock::reset(uint64_t block_no) {
 
 char* EntryBlock::encode() {
   char* value = new char[BLOCK_SIZE];
-  memset(value, 0, BLOCK_SIZE);
   size_t offset = 0;
   std::memcpy(value, &block_no_, sizeof(block_no_));
   offset += sizeof(block_no_);
@@ -173,7 +172,6 @@ void HeaderBlock::setFirstLSN(TS_OSN first_lsn) {
 
 char* HeaderBlock::encode() {
   char* value = new char[BLOCK_SIZE];
-  memset(value, 0, BLOCK_SIZE);
   size_t offset = 0;
   std::memcpy(value, &format, sizeof(format));
   offset += sizeof(format);
