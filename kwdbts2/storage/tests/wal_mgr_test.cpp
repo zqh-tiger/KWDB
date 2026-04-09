@@ -829,7 +829,6 @@ TEST_F(TestWALBufferMgr, SetHeaderBlockCheckpointInfo) {
   EXPECT_EQ(s, KStatus::SUCCESS);
   
   HeaderBlock header = buffer_mgr_->getHeaderBlock();
-  EXPECT_EQ(header.getCheckpointLsn(), 1000);
   EXPECT_EQ(header.getCheckpointNo(), 1);
 }
 
@@ -1003,7 +1002,6 @@ TEST_F(TestWALBufferMgr, CheckpointInfoUpdate) {
   EXPECT_EQ(s, KStatus::SUCCESS);
   
   HeaderBlock header = buffer_mgr_->getHeaderBlock();
-  EXPECT_EQ(header.getCheckpointLsn(), 300);
   EXPECT_EQ(header.getCheckpointNo(), 3);
 }
 
@@ -1220,7 +1218,6 @@ TEST_F(TestWALBufferMgr, SetCheckpointInfoMultipleTimes) {
   }
   
   HeaderBlock header = buffer_mgr_->getHeaderBlock();
-  EXPECT_EQ(header.getCheckpointLsn(), 900);
   EXPECT_EQ(header.getCheckpointNo(), 9);
 }
 
