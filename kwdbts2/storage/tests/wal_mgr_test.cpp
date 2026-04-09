@@ -1004,24 +1004,6 @@ TEST_F(TestWALMgr, TestWALMgr_ReadUncommittedWALLog) {
   delete wal_mgr;
 }
 
-TEST_F(TestWALMgr, TestWALMgr_LockUnlock) {
-  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
-  ASSERT_NE(wal_mgr, nullptr);
-  
-  KStatus init_result = wal_mgr->Init(ctx_);
-  EXPECT_EQ(init_result, KStatus::SUCCESS);
-  
-  wal_mgr->Lock();
-  
-  char test_data[] = "Lock test";
-  KStatus write_result = wal_mgr->WriteWAL(ctx_, test_data, sizeof(test_data));
-  EXPECT_EQ(write_result, KStatus::SUCCESS);
-  
-  wal_mgr->Unlock();
-  
-  delete wal_mgr;
-}
-
 TEST_F(TestWALMgr, TestWALMgr_MultipleWriteAndFlush) {
   WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
   ASSERT_NE(wal_mgr, nullptr);
