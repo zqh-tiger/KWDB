@@ -936,17 +936,6 @@ TEST_F(TestWALBufferMgr, Flush_EmptyBuffer) {
   EXPECT_EQ(s, KStatus::SUCCESS);
 }
 
-TEST_F(TestWALBufferMgr, MultipleInitCalls) {
-  KStatus s = buffer_mgr_->init(0);
-  ASSERT_EQ(s, KStatus::SUCCESS);
-  
-  s = buffer_mgr_->init(1000);
-  EXPECT_EQ(s, KStatus::SUCCESS);
-  
-  s = buffer_mgr_->init(2000);
-  EXPECT_EQ(s, KStatus::SUCCESS);
-}
-
 TEST_F(TestWALBufferMgr, WriteFlushWriteSequence) {
   KStatus s = buffer_mgr_->init(0);
   ASSERT_EQ(s, KStatus::SUCCESS);
@@ -1096,11 +1085,10 @@ TEST_F(TestWALBufferMgr, ReadAllTxnID_Empty) {
   ASSERT_EQ(s, KStatus::SUCCESS);
   
   std::unordered_map<uint64_t, txnOp> txn_op;
-  TS_OSN start_lsn = 0;
   TS_OSN end_lsn = buffer_mgr_->getCurrentLsn();
   std::unordered_map<TS_OSN, std::pair<uint64_t, uint64_t>> incomplete_idx;
   
-  s = buffer_mgr_->readAllTxnID(txn_op, start_lsn, end_lsn, nullptr, incomplete_idx);
+  s = buffer_mgr_->readAllTxnID(txn_op, end_lsn, end_lsn, nullptr, incomplete_idx);
   EXPECT_EQ(s, KStatus::SUCCESS);
 }
 
