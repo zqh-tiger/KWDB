@@ -69,7 +69,7 @@ class WALMgr {
    * @param wal_log
    * @return
    */
-  inline KStatus WriteWAL(kwdbContext_p ctx, k_char* wal_log, size_t length);
+  KStatus WriteWAL(kwdbContext_p ctx, k_char* wal_log, size_t length);
 
   inline KStatus writeLogEntry(kwdbContext_p ctx, LogEntry& logEntry) {
     auto wal_log = logEntry.encode();
