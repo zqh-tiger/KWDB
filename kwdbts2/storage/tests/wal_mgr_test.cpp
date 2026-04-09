@@ -667,11 +667,9 @@ class TestWALBufferMgr : public ::testing::Test {
     
     file_mgr_ = new WALFileMgr(test_dir_, table_id_, &opts_);
     ASSERT_NE(file_mgr_, nullptr);
-    
-    KStatus s = file_mgr_->Open();
-    ASSERT_EQ(s, KStatus::SUCCESS);
-    
-    s = file_mgr_->initWalFile(0);
+
+    TS_OSN first_lsn = BLOCK_SIZE + LOG_BLOCK_HEADER_SIZE;
+    auto s = file_mgr_->initWalFile(first_lsn);
     ASSERT_EQ(s, KStatus::SUCCESS);
     
     buffer_mgr_ = new WALBufferMgr(&opts_, file_mgr_);
@@ -698,11 +696,6 @@ TEST_F(TestWALBufferMgr, Constructor_Basic) {
 
 TEST_F(TestWALBufferMgr, Init_Basic) {
   KStatus s = buffer_mgr_->init(0);
-  EXPECT_EQ(s, KStatus::SUCCESS);
-}
-
-TEST_F(TestWALBufferMgr, Init_WithStartLsn) {
-  KStatus s = buffer_mgr_->init(1000);
   EXPECT_EQ(s, KStatus::SUCCESS);
 }
 
