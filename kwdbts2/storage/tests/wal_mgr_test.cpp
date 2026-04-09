@@ -899,10 +899,9 @@ TEST_F(TestWALBufferMgr, ReadUncommittedTxnID_Empty) {
   ASSERT_EQ(s, KStatus::SUCCESS);
   
   std::vector<uint64_t> uncommitted_id;
-  TS_OSN start_lsn = 0;
   TS_OSN end_lsn = buffer_mgr_->getCurrentLsn();
   
-  s = buffer_mgr_->readUncommittedTxnID(uncommitted_id, start_lsn, end_lsn);
+  s = buffer_mgr_->readUncommittedTxnID(uncommitted_id, end_lsn, end_lsn);
   EXPECT_EQ(s, KStatus::SUCCESS);
 }
 
