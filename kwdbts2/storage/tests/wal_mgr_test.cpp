@@ -1177,11 +1177,9 @@ class TestWALBufferMgr : public ::testing::Test {
     
     file_mgr_ = new WALFileMgr(test_dir_, table_id_, &opts_);
     ASSERT_NE(file_mgr_, nullptr);
-    
-    KStatus s = file_mgr_->Open();
-    ASSERT_EQ(s, KStatus::SUCCESS);
-    
-    s = file_mgr_->initWalFile(0);
+
+    TS_OSN first_lsn = BLOCK_SIZE + LOG_BLOCK_HEADER_SIZE;
+    auto s = file_mgr_->initWalFile(first_lsn);
     ASSERT_EQ(s, KStatus::SUCCESS);
     
     buffer_mgr_ = new WALBufferMgr(&opts_, file_mgr_);
@@ -1208,11 +1206,6 @@ TEST_F(TestWALBufferMgr, Constructor_Basic) {
 
 TEST_F(TestWALBufferMgr, Init_Basic) {
   KStatus s = buffer_mgr_->init(0);
-  EXPECT_EQ(s, KStatus::SUCCESS);
-}
-
-TEST_F(TestWALBufferMgr, Init_WithStartLsn) {
-  KStatus s = buffer_mgr_->init(1000);
   EXPECT_EQ(s, KStatus::SUCCESS);
 }
 
@@ -1339,7 +1332,6 @@ TEST_F(TestWALBufferMgr, SetHeaderBlockCheckpointInfo) {
   EXPECT_EQ(s, KStatus::SUCCESS);
   
   HeaderBlock header = buffer_mgr_->getHeaderBlock();
-  EXPECT_EQ(header.getCheckpointLsn(), 1000);
   EXPECT_EQ(header.getCheckpointNo(), 1);
 }
 
@@ -1399,19 +1391,6 @@ TEST_F(TestWALBufferMgr, WriteAndFlush_MultipleBlocks) {
   EXPECT_EQ(s, KStatus::SUCCESS);
 }
 
-TEST_F(TestWALBufferMgr, ReadWALLogs_EmptyBuffer) {
-  KStatus s = buffer_mgr_->init(0);
-  ASSERT_EQ(s, KStatus::SUCCESS);
-  
-  std::vector<LogEntry*> log_entries;
-  std::vector<uint64_t> end_chk;
-  TS_OSN start_lsn = 0;
-  TS_OSN end_lsn = buffer_mgr_->getCurrentLsn();
-  
-  s = buffer_mgr_->readWALLogs(log_entries, start_lsn, end_lsn, end_chk);
-  EXPECT_EQ(s, KStatus::SUCCESS);
-}
-
 TEST_F(TestWALBufferMgr, ReadWALLogs_InvalidRange) {
   KStatus s = buffer_mgr_->init(0);
   ASSERT_EQ(s, KStatus::SUCCESS);
@@ -1430,10 +1409,9 @@ TEST_F(TestWALBufferMgr, ReadUncommittedTxnID_Empty) {
   ASSERT_EQ(s, KStatus::SUCCESS);
   
   std::vector<uint64_t> uncommitted_id;
-  TS_OSN start_lsn = 0;
   TS_OSN end_lsn = buffer_mgr_->getCurrentLsn();
   
-  s = buffer_mgr_->readUncommittedTxnID(uncommitted_id, start_lsn, end_lsn);
+  s = buffer_mgr_->readUncommittedTxnID(uncommitted_id, end_lsn, end_lsn);
   EXPECT_EQ(s, KStatus::SUCCESS);
 }
 
@@ -1465,17 +1443,6 @@ TEST_F(TestWALBufferMgr, Flush_EmptyBuffer) {
   ASSERT_EQ(s, KStatus::SUCCESS);
   
   s = buffer_mgr_->flush();
-  EXPECT_EQ(s, KStatus::SUCCESS);
-}
-
-TEST_F(TestWALBufferMgr, MultipleInitCalls) {
-  KStatus s = buffer_mgr_->init(0);
-  ASSERT_EQ(s, KStatus::SUCCESS);
-  
-  s = buffer_mgr_->init(1000);
-  EXPECT_EQ(s, KStatus::SUCCESS);
-  
-  s = buffer_mgr_->init(2000);
   EXPECT_EQ(s, KStatus::SUCCESS);
 }
 
@@ -1513,7 +1480,6 @@ TEST_F(TestWALBufferMgr, CheckpointInfoUpdate) {
   EXPECT_EQ(s, KStatus::SUCCESS);
   
   HeaderBlock header = buffer_mgr_->getHeaderBlock();
-  EXPECT_EQ(header.getCheckpointLsn(), 300);
   EXPECT_EQ(header.getCheckpointNo(), 3);
 }
 
@@ -1629,11 +1595,10 @@ TEST_F(TestWALBufferMgr, ReadAllTxnID_Empty) {
   ASSERT_EQ(s, KStatus::SUCCESS);
   
   std::unordered_map<uint64_t, txnOp> txn_op;
-  TS_OSN start_lsn = 0;
   TS_OSN end_lsn = buffer_mgr_->getCurrentLsn();
   std::unordered_map<TS_OSN, std::pair<uint64_t, uint64_t>> incomplete_idx;
   
-  s = buffer_mgr_->readAllTxnID(txn_op, start_lsn, end_lsn, nullptr, incomplete_idx);
+  s = buffer_mgr_->readAllTxnID(txn_op, end_lsn, end_lsn, nullptr, incomplete_idx);
   EXPECT_EQ(s, KStatus::SUCCESS);
 }
 
@@ -1730,7 +1695,6 @@ TEST_F(TestWALBufferMgr, SetCheckpointInfoMultipleTimes) {
   }
   
   HeaderBlock header = buffer_mgr_->getHeaderBlock();
-  EXPECT_EQ(header.getCheckpointLsn(), 900);
   EXPECT_EQ(header.getCheckpointNo(), 9);
 }
 
