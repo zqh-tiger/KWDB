@@ -525,6 +525,7 @@ if (WITH_TESTS)
               storage/tests/st_transaction_mgr_test.cpp
               storage/tests/wal_components_test.cpp
               storage/tests/wal_mgr_test.cpp
+              engine/tests/raft_store_test.cpp
               exec/tests/*.cpp
               #engine/tests/*.cpp
               ts_engine/tests/*.cpp
