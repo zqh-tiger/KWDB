@@ -429,7 +429,7 @@ TEST_F(TestWALMgr, TestWALMgr_ReadWALLogForMtr) {
   EXPECT_EQ(init_result, KStatus::SUCCESS);
   
   // Write some MTR data
-  char tsx_id[] = "read_mtr_test";
+  char tsx_id[] = "1165041921481932801";
   KStatus begin_result = wal_mgr->WriteMTRWAL(ctx_, 1014, tsx_id, WALLogType::MTR_BEGIN);
   EXPECT_EQ(begin_result, KStatus::SUCCESS);
   
