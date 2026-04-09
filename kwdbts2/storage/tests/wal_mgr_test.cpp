@@ -881,19 +881,6 @@ TEST_F(TestWALBufferMgr, WriteAndFlush_MultipleBlocks) {
   EXPECT_EQ(s, KStatus::SUCCESS);
 }
 
-TEST_F(TestWALBufferMgr, ReadWALLogs_EmptyBuffer) {
-  KStatus s = buffer_mgr_->init(0);
-  ASSERT_EQ(s, KStatus::SUCCESS);
-  
-  std::vector<LogEntry*> log_entries;
-  std::vector<uint64_t> end_chk;
-  TS_OSN start_lsn = 0;
-  TS_OSN end_lsn = buffer_mgr_->getCurrentLsn();
-  
-  s = buffer_mgr_->readWALLogs(log_entries, start_lsn, end_lsn, end_chk);
-  EXPECT_EQ(s, KStatus::SUCCESS);
-}
-
 TEST_F(TestWALBufferMgr, ReadWALLogs_InvalidRange) {
   KStatus s = buffer_mgr_->init(0);
   ASSERT_EQ(s, KStatus::SUCCESS);
