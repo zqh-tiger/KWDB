@@ -9,10 +9,14 @@
 // MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 // See the Mulan PSL v2 for more details.
 
+#include <unordered_map>
+#include <algorithm>
+
 #include "libkwdbts2.h"
 #include "st_wal_mgr.h"
 #include "st_wal_internal_log_structure.h"
 #include "st_wal_internal_logblock.h"
+#include "st_wal_internal_buffer_mgr.h"
 
 #include "../../ts_engine/tests/test_util.h"
 
@@ -633,4 +637,739 @@ TEST_F(TestWALMgr, TestWALMgr_UpdateFirstLSN) {
   // since GetFirstLSN() reads from file header, not a member variable
   
   delete wal_mgr;
+}
+
+// ============================================================================
+// WALBufferMgr Tests
+// ============================================================================
+
+class TestWALBufferMgr : public ::testing::Test {
+ protected:
+  kwdbContext_t context_;
+  kwdbContext_p ctx_ = nullptr;
+  uint64_t tbl_grp_id_ = 123;
+  uint64_t table_id_ = 10001;
+  EngineOptions opts_;
+  std::string test_dir_;
+  WALFileMgr* file_mgr_{nullptr};
+  WALBufferMgr* buffer_mgr_{nullptr};
+
+  void SetUp() override {
+    ctx_ = &context_;
+    InitServerKWDBContext(ctx_);
+    opts_.wal_level = 1;
+    opts_.wal_buffer_size = 4;
+    test_dir_ = "./wal_buffer_mgr_test/";
+    opts_.db_path = test_dir_;
+    
+    fs::remove_all(test_dir_);
+    fs::create_directories(test_dir_);
+    
+    file_mgr_ = new WALFileMgr(test_dir_, table_id_, &opts_);
+    ASSERT_NE(file_mgr_, nullptr);
+    
+    KStatus s = file_mgr_->Open();
+    ASSERT_EQ(s, KStatus::SUCCESS);
+    
+    s = file_mgr_->initWalFile(0);
+    ASSERT_EQ(s, KStatus::SUCCESS);
+    
+    buffer_mgr_ = new WALBufferMgr(&opts_, file_mgr_);
+    ASSERT_NE(buffer_mgr_, nullptr);
+  }
+
+  void TearDown() override {
+    if (buffer_mgr_) {
+      delete buffer_mgr_;
+      buffer_mgr_ = nullptr;
+    }
+    if (file_mgr_) {
+      file_mgr_->Close();
+      delete file_mgr_;
+      file_mgr_ = nullptr;
+    }
+    fs::remove_all(test_dir_);
+  }
+};
+
+TEST_F(TestWALBufferMgr, Constructor_Basic) {
+  ASSERT_NE(buffer_mgr_, nullptr);
+}
+
+TEST_F(TestWALBufferMgr, Init_Basic) {
+  KStatus s = buffer_mgr_->init(0);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, Init_WithStartLsn) {
+  KStatus s = buffer_mgr_->init(1000);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, ResetMeta_Basic) {
+  KStatus s = buffer_mgr_->init(0);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  
+  buffer_mgr_->ResetMeta();
+  
+  SUCCEED();
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_SmallData) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data[] = "Test WAL data";
+  TS_OSN lsn_offset = 0;
+  
+  s = buffer_mgr_->writeWAL(ctx_, test_data, sizeof(test_data), lsn_offset);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  EXPECT_GT(lsn_offset, 0);
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_MultipleWrites) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  for (int i = 0; i < 10; ++i) {
+    char test_data[64];
+    snprintf(test_data, sizeof(test_data), "Test WAL data %d", i);
+    TS_OSN lsn_offset = 0;
+    
+    s = buffer_mgr_->writeWAL(ctx_, test_data, strlen(test_data), lsn_offset);
+    EXPECT_EQ(s, KStatus::SUCCESS);
+    EXPECT_GT(lsn_offset, 0);
+  }
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_LargeData) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::vector<char> large_data(4096 * 2, 'A');
+  TS_OSN lsn_offset = 0;
+  
+  s = buffer_mgr_->writeWAL(ctx_, large_data.data(), large_data.size(), lsn_offset);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  EXPECT_GT(lsn_offset, 0);
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_VeryLargeData) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::vector<char> very_large_data(8192 * 3, 'B');
+  TS_OSN lsn_offset = 0;
+  
+  s = buffer_mgr_->writeWAL(ctx_, very_large_data.data(), very_large_data.size(), lsn_offset);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  EXPECT_GT(lsn_offset, 0);
+}
+
+TEST_F(TestWALBufferMgr, Flush_Basic) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data[] = "Flush test data";
+  TS_OSN lsn_offset = 0;
+  s = buffer_mgr_->writeWAL(ctx_, test_data, sizeof(test_data), lsn_offset);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->flush();
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, Flush_MultipleTimes) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  for (int i = 0; i < 5; ++i) {
+    char test_data[64];
+    snprintf(test_data, sizeof(test_data), "Flush test %d", i);
+    TS_OSN lsn_offset = 0;
+    s = buffer_mgr_->writeWAL(ctx_, test_data, strlen(test_data), lsn_offset);
+    ASSERT_EQ(s, KStatus::SUCCESS);
+    
+    s = buffer_mgr_->flush();
+    EXPECT_EQ(s, KStatus::SUCCESS);
+  }
+}
+
+TEST_F(TestWALBufferMgr, FlushWithoutLock_Basic) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data[] = "Flush without lock test";
+  TS_OSN lsn_offset = 0;
+  s = buffer_mgr_->writeWAL(ctx_, test_data, sizeof(test_data), lsn_offset);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->flushWithoutLock(false);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, FlushWithoutLock_WithHeader) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data[] = "Flush with header test";
+  TS_OSN lsn_offset = 0;
+  s = buffer_mgr_->writeWAL(ctx_, test_data, sizeof(test_data), lsn_offset);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->flushWithoutLock(true);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, SetHeaderBlockCheckpointInfo) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->setHeaderBlockCheckpointInfo(1000, 1);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  
+  HeaderBlock header = buffer_mgr_->getHeaderBlock();
+  EXPECT_EQ(header.getCheckpointLsn(), 1000);
+  EXPECT_EQ(header.getCheckpointNo(), 1);
+}
+
+TEST_F(TestWALBufferMgr, SetHeaderBlockFirstLSN) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->setHeaderBlockFirstLSN(5000);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  
+  HeaderBlock header = buffer_mgr_->getHeaderBlock();
+  EXPECT_EQ(header.getFirstLSN(), 5000);
+}
+
+TEST_F(TestWALBufferMgr, GetCurrentLsn_AfterInit) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  TS_OSN current_lsn = buffer_mgr_->getCurrentLsn();
+  EXPECT_GT(current_lsn, 0);
+}
+
+TEST_F(TestWALBufferMgr, GetCurrentLsn_AfterWrite) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data[] = "Get current LSN test";
+  TS_OSN lsn_offset = 0;
+  s = buffer_mgr_->writeWAL(ctx_, test_data, sizeof(test_data), lsn_offset);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  TS_OSN current_lsn = buffer_mgr_->getCurrentLsn();
+  EXPECT_GT(current_lsn, 0);
+}
+
+TEST_F(TestWALBufferMgr, GetHeaderBlock_Basic) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  HeaderBlock header = buffer_mgr_->getHeaderBlock();
+  EXPECT_GE(header.getFirstLSN(), 0);
+}
+
+TEST_F(TestWALBufferMgr, WriteAndFlush_MultipleBlocks) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  for (int i = 0; i < 100; ++i) {
+    char test_data[256];
+    snprintf(test_data, sizeof(test_data), "Block test data iteration %d with some padding", i);
+    TS_OSN lsn_offset = 0;
+    s = buffer_mgr_->writeWAL(ctx_, test_data, strlen(test_data), lsn_offset);
+    ASSERT_EQ(s, KStatus::SUCCESS);
+  }
+  
+  s = buffer_mgr_->flush();
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, ReadWALLogs_EmptyBuffer) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::vector<LogEntry*> log_entries;
+  std::vector<uint64_t> end_chk;
+  TS_OSN start_lsn = 0;
+  TS_OSN end_lsn = buffer_mgr_->getCurrentLsn();
+  
+  s = buffer_mgr_->readWALLogs(log_entries, start_lsn, end_lsn, end_chk);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, ReadWALLogs_InvalidRange) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::vector<LogEntry*> log_entries;
+  std::vector<uint64_t> end_chk;
+  TS_OSN start_lsn = 1000;
+  TS_OSN end_lsn = 100;
+  
+  s = buffer_mgr_->readWALLogs(log_entries, start_lsn, end_lsn, end_chk);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, ReadUncommittedTxnID_Empty) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::vector<uint64_t> uncommitted_id;
+  TS_OSN start_lsn = 0;
+  TS_OSN end_lsn = buffer_mgr_->getCurrentLsn();
+  
+  s = buffer_mgr_->readUncommittedTxnID(uncommitted_id, start_lsn, end_lsn);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, ReadUncommittedTxnID_InvalidRange) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::vector<uint64_t> uncommitted_id;
+  TS_OSN start_lsn = 1000;
+  TS_OSN end_lsn = 100;
+  
+  s = buffer_mgr_->readUncommittedTxnID(uncommitted_id, start_lsn, end_lsn);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_ZeroLength) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data[] = "";
+  TS_OSN lsn_offset = 0;
+  
+  s = buffer_mgr_->writeWAL(ctx_, test_data, 0, lsn_offset);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, Flush_EmptyBuffer) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->flush();
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, MultipleInitCalls) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->init(1000);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->init(2000);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, WriteFlushWriteSequence) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data1[] = "First write";
+  TS_OSN lsn1 = 0;
+  s = buffer_mgr_->writeWAL(ctx_, test_data1, sizeof(test_data1), lsn1);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->flush();
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data2[] = "Second write";
+  TS_OSN lsn2 = 0;
+  s = buffer_mgr_->writeWAL(ctx_, test_data2, sizeof(test_data2), lsn2);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  EXPECT_GT(lsn2, lsn1);
+}
+
+TEST_F(TestWALBufferMgr, CheckpointInfoUpdate) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->setHeaderBlockCheckpointInfo(100, 1);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->setHeaderBlockCheckpointInfo(200, 2);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->setHeaderBlockCheckpointInfo(300, 3);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  
+  HeaderBlock header = buffer_mgr_->getHeaderBlock();
+  EXPECT_EQ(header.getCheckpointLsn(), 300);
+  EXPECT_EQ(header.getCheckpointNo(), 3);
+}
+
+TEST_F(TestWALBufferMgr, FirstLSNUpdate) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->setHeaderBlockFirstLSN(1000);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->setHeaderBlockFirstLSN(2000);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  
+  HeaderBlock header = buffer_mgr_->getHeaderBlock();
+  EXPECT_EQ(header.getFirstLSN(), 2000);
+}
+
+TEST_F(TestWALBufferMgr, StressTest_ManyWrites) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  for (int i = 0; i < 1000; ++i) {
+    char test_data[128];
+    snprintf(test_data, sizeof(test_data), "Stress test data %d", i);
+    TS_OSN lsn_offset = 0;
+    s = buffer_mgr_->writeWAL(ctx_, test_data, strlen(test_data), lsn_offset);
+    ASSERT_EQ(s, KStatus::SUCCESS);
+    
+    if (i % 100 == 0) {
+      s = buffer_mgr_->flush();
+      ASSERT_EQ(s, KStatus::SUCCESS);
+    }
+  }
+  
+  s = buffer_mgr_->flush();
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_ExactlyBlockSize) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::vector<char> block_sized_data(4000, 'X');
+  TS_OSN lsn_offset = 0;
+  
+  s = buffer_mgr_->writeWAL(ctx_, block_sized_data.data(), block_sized_data.size(), lsn_offset);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_SplitAcrossBlocks) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::vector<char> first_write(3000, 'A');
+  TS_OSN lsn1 = 0;
+  s = buffer_mgr_->writeWAL(ctx_, first_write.data(), first_write.size(), lsn1);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::vector<char> second_write(3000, 'B');
+  TS_OSN lsn2 = 0;
+  s = buffer_mgr_->writeWAL(ctx_, second_write.data(), second_write.size(), lsn2);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  EXPECT_GT(lsn2, lsn1);
+}
+
+TEST_F(TestWALBufferMgr, FlushInternal_WithHeader) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data[] = "Flush internal test";
+  TS_OSN lsn_offset = 0;
+  s = buffer_mgr_->writeWAL(ctx_, test_data, sizeof(test_data), lsn_offset);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->flushInternal(true);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, FlushInternal_WithoutHeader) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data[] = "Flush internal without header test";
+  TS_OSN lsn_offset = 0;
+  s = buffer_mgr_->writeWAL(ctx_, test_data, sizeof(test_data), lsn_offset);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->flushInternal(false);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, ReinitAfterFlush) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data[] = "Before reinit";
+  TS_OSN lsn_offset = 0;
+  s = buffer_mgr_->writeWAL(ctx_, test_data, sizeof(test_data), lsn_offset);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->flush();
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  buffer_mgr_->ResetMeta();
+  
+  s = buffer_mgr_->init(0);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, ReadAllTxnID_Empty) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::unordered_map<uint64_t, txnOp> txn_op;
+  TS_OSN start_lsn = 0;
+  TS_OSN end_lsn = buffer_mgr_->getCurrentLsn();
+  std::unordered_map<TS_OSN, std::pair<uint64_t, uint64_t>> incomplete_idx;
+  
+  s = buffer_mgr_->readAllTxnID(txn_op, start_lsn, end_lsn, nullptr, incomplete_idx);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, ReadAllTxnID_InvalidRange) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::unordered_map<uint64_t, txnOp> txn_op;
+  TS_OSN start_lsn = 1000;
+  TS_OSN end_lsn = 100;
+  std::unordered_map<TS_OSN, std::pair<uint64_t, uint64_t>> incomplete_idx;
+  
+  s = buffer_mgr_->readAllTxnID(txn_op, start_lsn, end_lsn, nullptr, incomplete_idx);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_MaxBlockSize) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::vector<char> max_block_data(4072, 'M');
+  TS_OSN lsn_offset = 0;
+  
+  s = buffer_mgr_->writeWAL(ctx_, max_block_data.data(), max_block_data.size(), lsn_offset);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, MultipleFlushOperations) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  for (int round = 0; round < 3; ++round) {
+    for (int i = 0; i < 50; ++i) {
+      char test_data[128];
+      snprintf(test_data, sizeof(test_data), "Round %d data %d", round, i);
+      TS_OSN lsn_offset = 0;
+      s = buffer_mgr_->writeWAL(ctx_, test_data, strlen(test_data), lsn_offset);
+      ASSERT_EQ(s, KStatus::SUCCESS);
+    }
+    s = buffer_mgr_->flush();
+    ASSERT_EQ(s, KStatus::SUCCESS);
+  }
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_BinaryData) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::vector<char> binary_data(256);
+  for (int i = 0; i < 256; ++i) {
+    binary_data[i] = static_cast<char>(i);
+  }
+  TS_OSN lsn_offset = 0;
+  
+  s = buffer_mgr_->writeWAL(ctx_, binary_data.data(), binary_data.size(), lsn_offset);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_NullPointer) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  TS_OSN lsn_offset = 0;
+  s = buffer_mgr_->writeWAL(ctx_, nullptr, 0, lsn_offset);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, FlushAfterMultipleWrites) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  for (int i = 0; i < 20; ++i) {
+    char test_data[256];
+    snprintf(test_data, sizeof(test_data), "Test data for flush %d with padding", i);
+    TS_OSN lsn_offset = 0;
+    s = buffer_mgr_->writeWAL(ctx_, test_data, strlen(test_data), lsn_offset);
+    ASSERT_EQ(s, KStatus::SUCCESS);
+  }
+  
+  s = buffer_mgr_->flush();
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->flush();
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, SetCheckpointInfoMultipleTimes) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  for (int i = 0; i < 10; ++i) {
+    s = buffer_mgr_->setHeaderBlockCheckpointInfo(i * 100, i);
+    ASSERT_EQ(s, KStatus::SUCCESS);
+  }
+  
+  HeaderBlock header = buffer_mgr_->getHeaderBlock();
+  EXPECT_EQ(header.getCheckpointLsn(), 900);
+  EXPECT_EQ(header.getCheckpointNo(), 9);
+}
+
+TEST_F(TestWALBufferMgr, SetFirstLSNMultipleTimes) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  for (int i = 0; i < 10; ++i) {
+    s = buffer_mgr_->setHeaderBlockFirstLSN(i * 1000);
+    ASSERT_EQ(s, KStatus::SUCCESS);
+  }
+  
+  HeaderBlock header = buffer_mgr_->getHeaderBlock();
+  EXPECT_EQ(header.getFirstLSN(), 9000);
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_VerySmallData) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char small_data[] = "X";
+  TS_OSN lsn_offset = 0;
+  
+  s = buffer_mgr_->writeWAL(ctx_, small_data, 1, lsn_offset);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_ExactlyMaxLogSize) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::vector<char> exact_data(4072, 'E');
+  TS_OSN lsn_offset = 0;
+  
+  s = buffer_mgr_->writeWAL(ctx_, exact_data.data(), exact_data.size(), lsn_offset);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_SlightlyOverMaxLogSize) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::vector<char> over_data(4080, 'O');
+  TS_OSN lsn_offset = 0;
+  
+  s = buffer_mgr_->writeWAL(ctx_, over_data.data(), over_data.size(), lsn_offset);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, FlushInternalAfterWrite) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data[] = "Flush internal after write test";
+  TS_OSN lsn_offset = 0;
+  s = buffer_mgr_->writeWAL(ctx_, test_data, sizeof(test_data), lsn_offset);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->flushInternal(true);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->flushInternal(false);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, GetCurrentLsnAfterMultipleOperations) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  TS_OSN prev_lsn = 0;
+  for (int i = 0; i < 10; ++i) {
+    char test_data[64];
+    snprintf(test_data, sizeof(test_data), "LSN test %d", i);
+    TS_OSN lsn_offset = 0;
+    s = buffer_mgr_->writeWAL(ctx_, test_data, strlen(test_data), lsn_offset);
+    ASSERT_EQ(s, KStatus::SUCCESS);
+    
+    TS_OSN current_lsn = buffer_mgr_->getCurrentLsn();
+    EXPECT_GT(current_lsn, prev_lsn);
+    prev_lsn = current_lsn;
+  }
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_WithSpecialCharacters) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char special_data[] = "Special\n\t\r\nData\x00WithNull";
+  TS_OSN lsn_offset = 0;
+  
+  s = buffer_mgr_->writeWAL(ctx_, special_data, sizeof(special_data), lsn_offset);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, FlushWithoutLockAfterWrite) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data[] = "Flush without lock after write";
+  TS_OSN lsn_offset = 0;
+  s = buffer_mgr_->writeWAL(ctx_, test_data, sizeof(test_data), lsn_offset);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->flushWithoutLock(true);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  
+  s = buffer_mgr_->flushWithoutLock(false);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, WriteWAL_LargeAmountOfData) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  std::vector<char> large_data(1024 * 1024, 'L');
+  size_t chunk_size = 4096;
+  
+  for (size_t offset = 0; offset < large_data.size(); offset += chunk_size) {
+    size_t write_size = std::min(chunk_size, large_data.size() - offset);
+    TS_OSN lsn_offset = 0;
+    s = buffer_mgr_->writeWAL(ctx_, large_data.data() + offset, write_size, lsn_offset);
+    ASSERT_EQ(s, KStatus::SUCCESS);
+    
+    if (offset % (chunk_size * 10) == 0) {
+      s = buffer_mgr_->flush();
+      ASSERT_EQ(s, KStatus::SUCCESS);
+    }
+  }
+  
+  s = buffer_mgr_->flush();
+  EXPECT_EQ(s, KStatus::SUCCESS);
+}
+
+TEST_F(TestWALBufferMgr, ResetMetaAndReinit) {
+  KStatus s = buffer_mgr_->init(0);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data[] = "Before reset";
+  TS_OSN lsn_offset = 0;
+  s = buffer_mgr_->writeWAL(ctx_, test_data, sizeof(test_data), lsn_offset);
+  ASSERT_EQ(s, KStatus::SUCCESS);
+  
+  buffer_mgr_->ResetMeta();
+  
+  s = buffer_mgr_->init(0);
+  EXPECT_EQ(s, KStatus::SUCCESS);
+  
+  char test_data2[] = "After reinit";
+  TS_OSN lsn_offset2 = 0;
+  s = buffer_mgr_->writeWAL(ctx_, test_data2, sizeof(test_data2), lsn_offset2);
+  EXPECT_EQ(s, KStatus::SUCCESS);
 }
