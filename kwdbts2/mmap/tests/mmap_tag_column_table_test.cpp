@@ -20,6 +20,7 @@
 #include <cstdio>
 
 #include "../include/mmap/mmap_tag_column_table.h"
+#include "../include/mmap/mmap_tag_column_table_aux.h"
 #include "ts_common.h"
 
 extern uint32_t k_entity_group_id_size;
@@ -320,6 +321,8 @@ TEST_F(TestMMapTagColumnTable, Insert_MultipleRows) {
     int result = table.insert(entity_group_id_, i, 100 + i, 0, OperateType::Insert, record, &row_id);
 
     EXPECT_GE(result, 0);
+
+    auto test = table.GenTagPack(row_id);
   }
 }
 
@@ -599,4 +602,37 @@ TEST_F(TestMMapTagColumnTable, SetDropped) {
   table.setDropped();
 
   EXPECT_TRUE(table.isDropped());
+}
+
+TEST_F(TestMMapTagColumnTable, SetLSN) {
+  MMapTagColumnTable table;
+  ErrorInfo err_info;
+  ASSERT_EQ(CreateTableWithData(&table, err_info), 0);
+
+  table.setLSN(10086);
+
+  table.sync_with_lsn(10086);
+}
+
+TEST_F(TestMMapTagColumnTable, GetEntityIdByRownum) {
+  MMapTagColumnTable table;
+  ErrorInfo err_info;
+  ASSERT_EQ(CreateTableWithData(&table, err_info), 0);
+
+  char record[256] = {0};
+  size_t row_id = 0;
+
+  int result = table.insert(entity_group_id_, 1, 100, 0, OperateType::Insert, record, &row_id);
+
+  std::vector<kwdbts::EntityResultIndex> entityIdList;
+  table.getEntityIdByRownum(1, &entityIdList);
+  EXPECT_EQ(entityIdList.size(), 0);
+
+  uint32_t hash_point;
+  table.getHashpointByRowNum(1, &hash_point);
+
+  uint32_t entity_id, group_id;
+  table.getEntityIdGroupId(1, entity_id, group_id);
+
+  table.getMaxEntityIdByVGroupId(1, entity_id);
 }
