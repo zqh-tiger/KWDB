@@ -639,6 +639,516 @@ TEST_F(TestWALMgr, TestWALMgr_UpdateFirstLSN) {
   delete wal_mgr;
 }
 
+TEST_F(TestWALMgr, TestWALMgr_WriteCheckpointWAL_Basic) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  TS_OSN entry_lsn;
+  KStatus checkpoint_result = wal_mgr->WriteCheckpointWAL(ctx_, 2001, entry_lsn);
+  EXPECT_EQ(checkpoint_result, KStatus::SUCCESS);
+  EXPECT_GT(entry_lsn, 0);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_WriteCheckpointWAL_WithPartitions) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  CheckpointPartition partitions[3];
+  partitions[0].partition_id = 1;
+  partitions[0].start_offset = 0;
+  partitions[0].row_count = 100;
+  partitions[1].partition_id = 2;
+  partitions[1].start_offset = 100;
+  partitions[1].row_count = 200;
+  partitions[2].partition_id = 3;
+  partitions[2].start_offset = 300;
+  partitions[2].row_count = 150;
+  
+  TS_OSN entry_lsn;
+  KStatus checkpoint_result = wal_mgr->WriteCheckpointWAL(ctx_, 2002, 500, 3, partitions, entry_lsn);
+  EXPECT_EQ(checkpoint_result, KStatus::SUCCESS);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_WriteSnapshotWAL) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  KwTsSpan span;
+  span.begin = 1000;
+  span.end = 2000;
+  
+  KStatus snapshot_result = wal_mgr->WriteSnapshotWAL(ctx_, 3001, 10001, 0, 100, span);
+  EXPECT_EQ(snapshot_result, KStatus::SUCCESS);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_WriteTempDirectoryWAL) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  std::string temp_path = "/tmp/wal_temp_dir";
+  KStatus temp_dir_result = wal_mgr->WriteTempDirectoryWAL(ctx_, 3002, temp_path);
+  EXPECT_EQ(temp_dir_result, KStatus::SUCCESS);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_WriteDDLDropWAL) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  KStatus ddl_result = wal_mgr->WriteDDLDropWAL(ctx_, 4001, 50001);
+  EXPECT_EQ(ddl_result, KStatus::SUCCESS);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_WriteDDLAlterWAL) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  char column_meta[] = "test_column_metadata";
+  TSSlice meta_slice{column_meta, sizeof(column_meta)};
+  
+  KStatus alter_result = wal_mgr->WriteDDLAlterWAL(ctx_, 4002, 50002, AlterType::ADD_COLUMN, 1, 2, meta_slice);
+  EXPECT_EQ(alter_result, KStatus::SUCCESS);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_ResetCurLSNAndFlushMeta) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  TS_OSN current_lsn = wal_mgr->FetchCurrentLSN();
+  TS_OSN new_lsn = current_lsn + 5000;
+  
+  KStatus reset_result = wal_mgr->ResetCurLSNAndFlushMeta(ctx_, new_lsn);
+  EXPECT_EQ(reset_result, KStatus::SUCCESS);
+  
+  TS_OSN updated_lsn = wal_mgr->FetchCurrentLSN();
+  EXPECT_EQ(updated_lsn, new_lsn);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_CleanUp) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  char test_data[] = "Cleanup test data";
+  KStatus write_result = wal_mgr->WriteWAL(ctx_, test_data, sizeof(test_data));
+  EXPECT_EQ(write_result, KStatus::SUCCESS);
+  
+  wal_mgr->CreateCheckpoint(ctx_);
+  
+  wal_mgr->CleanUp(ctx_);
+  
+  SUCCEED();
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_RemoveChkFile) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  KStatus remove_result = wal_mgr->RemoveChkFile(ctx_);
+  EXPECT_EQ(remove_result, KStatus::SUCCESS);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_SwitchNextFile) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  char test_data[] = "Before switch";
+  KStatus write_result = wal_mgr->WriteWAL(ctx_, test_data, sizeof(test_data));
+  EXPECT_EQ(write_result, KStatus::SUCCESS);
+  
+  KStatus switch_result = wal_mgr->SwitchNextFile(0);
+  EXPECT_EQ(switch_result, KStatus::SUCCESS);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_SwitchNextFile_WithFirstLsn) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  char test_data[] = "Before switch with lsn";
+  KStatus write_result = wal_mgr->WriteWAL(ctx_, test_data, sizeof(test_data));
+  EXPECT_EQ(write_result, KStatus::SUCCESS);
+  
+  TS_OSN current_lsn = wal_mgr->FetchCurrentLSN();
+  KStatus switch_result = wal_mgr->SwitchNextFile(current_lsn + 1000);
+  EXPECT_EQ(switch_result, KStatus::SUCCESS);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_SwitchLastFile) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  char test_data[] = "Before last switch";
+  KStatus write_result = wal_mgr->WriteWAL(ctx_, test_data, sizeof(test_data));
+  EXPECT_EQ(write_result, KStatus::SUCCESS);
+  
+  TS_OSN current_lsn = wal_mgr->FetchCurrentLSN();
+  KStatus switch_result = wal_mgr->SwitchLastFile(ctx_, current_lsn);
+  EXPECT_EQ(switch_result, KStatus::SUCCESS);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_NeedCheckpoint) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  bool need_checkpoint = wal_mgr->NeedCheckpoint();
+  EXPECT_FALSE(need_checkpoint);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_SetCurLSN) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  TS_OSN new_lsn = 99999;
+  wal_mgr->SetCurLSN(new_lsn);
+  
+  TS_OSN current_lsn = wal_mgr->FetchCurrentLSN();
+  EXPECT_EQ(current_lsn, new_lsn);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_GetWALFilePath) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  std::string wal_path = wal_mgr->GetWALFilePath();
+  EXPECT_FALSE(wal_path.empty());
+  EXPECT_NE(wal_path.find("wal"), std::string::npos);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_GetWALChkFilePath) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  std::string chk_path = wal_mgr->GetWALChkFilePath();
+  EXPECT_FALSE(chk_path.empty());
+  EXPECT_NE(chk_path.find("chk"), std::string::npos);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_ReadWALLogAndSwitchFile) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  char test_data[] = "Test for switch file read";
+  TS_OSN entry_lsn;
+  KStatus write_result = wal_mgr->WriteWAL(ctx_, test_data, sizeof(test_data), entry_lsn);
+  EXPECT_EQ(write_result, KStatus::SUCCESS);
+  
+  std::vector<LogEntry*> logs;
+  std::vector<uint64_t> end_chk;
+  TS_OSN current_lsn = wal_mgr->FetchCurrentLSN();
+  
+  KStatus read_result = wal_mgr->ReadWALLogAndSwitchFile(logs, entry_lsn, current_lsn, end_chk);
+  EXPECT_EQ(read_result, KStatus::SUCCESS);
+  
+  for (auto log : logs) {
+    delete log;
+  }
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_ReadUncommittedTxnID) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  char tsx_id[] = "uncommitted_tsx";
+  wal_mgr->WriteMTRWAL(ctx_, 5001, tsx_id, WALLogType::MTR_BEGIN);
+  
+  std::vector<uint64_t> uncommitted_xid;
+  KStatus read_result = wal_mgr->ReadUncommittedTxnID(uncommitted_xid);
+  EXPECT_EQ(read_result, KStatus::SUCCESS);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_ReadAllTxnID) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  char tsx_id[] = "all_txn_tsx";
+  wal_mgr->WriteMTRWAL(ctx_, 5002, tsx_id, WALLogType::MTR_BEGIN);
+  wal_mgr->WriteMTRWAL(ctx_, 5002, tsx_id, WALLogType::MTR_COMMIT);
+  
+  std::unordered_map<uint64_t, txnOp> txn_op;
+  std::unordered_map<TS_OSN, std::pair<uint64_t, uint64_t>> incomplete;
+  
+  KStatus read_result = wal_mgr->ReadAllTxnID(txn_op, nullptr, incomplete);
+  EXPECT_EQ(read_result, KStatus::SUCCESS);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_ReadWALLogForTSx) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  char ts_trans_id[] = "ts_trans_001";
+  std::vector<LogEntry*> logs;
+  
+  KStatus read_result = wal_mgr->ReadWALLogForTSx(ts_trans_id, logs);
+  EXPECT_EQ(read_result, KStatus::SUCCESS);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_ReadUncommittedWALLog) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  char tsx_id[] = "uncommitted_wal_tsx";
+  wal_mgr->WriteMTRWAL(ctx_, 6001, tsx_id, WALLogType::MTR_BEGIN);
+  
+  TS_OSN first_lsn = wal_mgr->GetFirstLSN();
+  TS_OSN current_lsn = wal_mgr->FetchCurrentLSN();
+  
+  std::vector<LogEntry*> logs;
+  std::vector<uint64_t> end_chk;
+  std::vector<uint64_t> uncommitted_xid = {6001};
+  
+  KStatus read_result = wal_mgr->ReadUncommittedWALLog(logs, first_lsn, current_lsn, end_chk, uncommitted_xid);
+  EXPECT_EQ(read_result, KStatus::SUCCESS);
+  
+  for (auto log : logs) {
+    delete log;
+  }
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_LockUnlock) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  wal_mgr->Lock();
+  
+  char test_data[] = "Lock test";
+  KStatus write_result = wal_mgr->WriteWAL(ctx_, test_data, sizeof(test_data));
+  EXPECT_EQ(write_result, KStatus::SUCCESS);
+  
+  wal_mgr->Unlock();
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_MultipleWriteAndFlush) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  for (int i = 0; i < 50; ++i) {
+    char test_data[64];
+    snprintf(test_data, sizeof(test_data), "Test data %d", i);
+    KStatus write_result = wal_mgr->WriteWAL(ctx_, test_data, strlen(test_data));
+    EXPECT_EQ(write_result, KStatus::SUCCESS);
+    
+    if (i % 10 == 0) {
+      KStatus flush_result = wal_mgr->Flush(ctx_);
+      EXPECT_EQ(flush_result, KStatus::SUCCESS);
+    }
+  }
+  
+  KStatus final_flush = wal_mgr->Flush(ctx_);
+  EXPECT_EQ(final_flush, KStatus::SUCCESS);
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_Create) {
+  std::string create_test_dir = "./wal_mgr_create_test/";
+  fs::remove_all(create_test_dir);
+  
+  WALMgr* wal_mgr = new WALMgr(create_test_dir, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus create_result = wal_mgr->Create(ctx_);
+  EXPECT_EQ(create_result, KStatus::SUCCESS);
+  
+  TS_OSN current_lsn = wal_mgr->FetchCurrentLSN();
+  EXPECT_GT(current_lsn, 0);
+  
+  delete wal_mgr;
+  fs::remove_all(create_test_dir);
+}
+
+TEST_F(TestWALMgr, TestWALMgr_Init_ExistingPath) {
+  WALMgr* wal_mgr1 = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr1, nullptr);
+  
+  KStatus init_result = wal_mgr1->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  char test_data[] = "First init";
+  wal_mgr1->WriteWAL(ctx_, test_data, sizeof(test_data));
+  wal_mgr1->Flush(ctx_);
+  
+  delete wal_mgr1;
+  
+  WALMgr* wal_mgr2 = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr2, nullptr);
+  
+  KStatus init_result2 = wal_mgr2->Init(ctx_);
+  EXPECT_EQ(init_result2, KStatus::SUCCESS);
+  
+  delete wal_mgr2;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_WriteReadSequence) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  TS_OSN first_lsn = 0;
+  for (int i = 0; i < 5; ++i) {
+    char test_data[64];
+    snprintf(test_data, sizeof(test_data), "Sequence test %d", i);
+    TS_OSN entry_lsn;
+    KStatus write_result = wal_mgr->WriteWAL(ctx_, test_data, strlen(test_data), entry_lsn);
+    EXPECT_EQ(write_result, KStatus::SUCCESS);
+    
+    if (i == 0) {
+      first_lsn = entry_lsn;
+    }
+  }
+  
+  KStatus flush_result = wal_mgr->Flush(ctx_);
+  EXPECT_EQ(flush_result, KStatus::SUCCESS);
+  
+  std::vector<LogEntry*> logs;
+  std::vector<uint64_t> end_chk;
+  TS_OSN current_lsn = wal_mgr->FetchCurrentLSN();
+  
+  KStatus read_result = wal_mgr->ReadWALLog(logs, first_lsn, current_lsn, end_chk);
+  EXPECT_EQ(read_result, KStatus::SUCCESS);
+  
+  for (auto log : logs) {
+    delete log;
+  }
+  
+  delete wal_mgr;
+}
+
+TEST_F(TestWALMgr, TestWALMgr_CheckpointSequence) {
+  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
+  ASSERT_NE(wal_mgr, nullptr);
+  
+  KStatus init_result = wal_mgr->Init(ctx_);
+  EXPECT_EQ(init_result, KStatus::SUCCESS);
+  
+  for (int i = 0; i < 3; ++i) {
+    char test_data[64];
+    snprintf(test_data, sizeof(test_data), "Before checkpoint %d", i);
+    wal_mgr->WriteWAL(ctx_, test_data, strlen(test_data));
+    
+    KStatus checkpoint_result = wal_mgr->CreateCheckpoint(ctx_);
+    EXPECT_EQ(checkpoint_result, KStatus::SUCCESS);
+    
+    TS_OSN checkpoint_lsn = wal_mgr->FetchCheckpointLSN();
+    EXPECT_GT(checkpoint_lsn, 0);
+  }
+  
+  delete wal_mgr;
+}
+
+
 // ============================================================================
 // WALBufferMgr Tests
 // ============================================================================
