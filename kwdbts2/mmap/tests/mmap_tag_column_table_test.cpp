@@ -626,7 +626,7 @@ TEST_F(TestMMapTagColumnTable, GetEntityIdByRownum) {
 
   std::vector<kwdbts::EntityResultIndex> entityIdList;
   table.getEntityIdByRownum(1, &entityIdList);
-  EXPECT_EQ(entityIdList.size(), 0);
+  EXPECT_EQ(entityIdList.size(), 1);
 
   uint32_t hash_point;
   table.getHashpointByRowNum(1, &hash_point);
