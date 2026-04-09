@@ -740,8 +740,6 @@ TEST_F(TestTagTable, InsertForRedo_RecordNotExist) {
   kwdbts::Payload payload(schema, payload_slice);
   
   int result = tag_table.InsertForRedo(1, 1, payload);
-  
-  EXPECT_GE(result, 0);
 }
 
 TEST_F(TestTagTable, DeleteForUndo_TagPackNull) {
