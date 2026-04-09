@@ -31,7 +31,6 @@
 #include "data_type.h"
 #include "lg_api.h"
 #include "libkwdbts2.h"
-#include "lz4hc.h"
 #include "settings.h"
 #include "ts_bitmap.h"
 #include "ts_bufferbuilder.h"
@@ -41,6 +40,29 @@
 #include "ts_sliceguard.h"
 
 namespace kwdbts {
+
+namespace {
+
+constexpr size_t kGeneralCompressionHeaderSize = sizeof(uint64_t);
+constexpr int kDefaultCompressionLevelIndex = 0;
+
+int NormalizeCompressionLevel(int level) {
+  if (level < 0 || level >= 4) {
+    LOG_ERROR("Invalid compress level index: %d, fallback to default level.", level);
+    return kDefaultCompressionLevelIndex;
+  }
+  return level;
+}
+
+bool HasGeneralCompressionHeader(TSSlice data, const char* algorithm_name) {
+  if (data.len < kGeneralCompressionHeaderSize) {
+    LOG_ERROR("%s input too short: %lu", algorithm_name, data.len);
+    return false;
+  }
+  return true;
+}
+
+}  // namespace
 
 // Gorilla compression; a.k.a delta of delta
 // Ref: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
@@ -899,12 +921,14 @@ size_t SnappyString::GetUncompressedSize(TSSlice data, uint64_t count) const {
 }
 
 bool LZ4String::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const {
+  out->clear();
   if (data.len == 0) {
     return true;
   }
+  (void)level;
   int dst_capacity = LZ4_compressBound(data.len);
   std::vector<char> compressed(dst_capacity);
-  int compressed_size = LZ4_compress_HC(data.data, compressed.data(), data.len, dst_capacity, level);
+  int compressed_size = LZ4_compress_default(data.data, compressed.data(), data.len, dst_capacity);
   if (compressed_size == 0) {
     LOG_ERROR("LZ4 Compress Failed!");
     // out->append(data);
@@ -921,13 +945,15 @@ bool LZ4String::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) cons
     *out = TsSliceGuard(data);
     return true;
   }
+  if (!HasGeneralCompressionHeader(data, "LZ4 decompress")) {
+    return false;
+  }
   uint64_t org_size = DecodeFixed64(data.data);
   TsBufferBuilder builder(org_size);
-  int ret_size = LZ4_decompress_safe(data.data + 8, builder.data(), data.len - 8, org_size);
+  int ret_size = LZ4_decompress_safe(data.data + kGeneralCompressionHeaderSize, builder.data(),
+                                     data.len - kGeneralCompressionHeaderSize, org_size);
   if (ret_size != org_size) {
     LOG_ERROR("LZ4 Decompress Failed!");
-    builder.assign(data.data, data.len);
-    *out = builder.GetBuffer();
     return false;
   }
   *out = builder.GetBuffer();
@@ -935,11 +961,15 @@ bool LZ4String::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) cons
 }
 
 size_t LZ4String::GetUncompressedSize(TSSlice data, uint64_t count) const {
+  if (!HasGeneralCompressionHeader(data, "LZ4 get uncompressed size")) {
+    return static_cast<size_t>(-1);
+  }
   uint64_t org_size = DecodeFixed64(data.data);
   return org_size == 0 ? -1 : org_size;
 }
 
 bool ZSTDString::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const {
+  out->clear();
   if (data.len == 0) {
     out->append(data);
     return true;
@@ -966,13 +996,15 @@ bool ZSTDString::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) con
     *out = TsSliceGuard(data);
     return true;
   }
+  if (!HasGeneralCompressionHeader(data, "ZSTD decompress")) {
+    return false;
+  }
   uint64_t org_size = DecodeFixed64(data.data);
   TsBufferBuilder builder(org_size);
-  size_t ret_size = ZSTD_decompress(builder.data(), org_size, data.data + 8, data.len - 8);
+  size_t ret_size = ZSTD_decompress(builder.data(), org_size, data.data + kGeneralCompressionHeaderSize,
+                                    data.len - kGeneralCompressionHeaderSize);
   if (ZSTD_isError(ret_size) || ret_size != org_size) {
     LOG_ERROR("ZSTD Decompress Failed!");
-    builder.assign(data.data, data.len);
-    *out = builder.GetBuffer();
     return false;
   }
   *out = builder.GetBuffer();
@@ -980,11 +1012,15 @@ bool ZSTDString::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) con
 }
 
 size_t ZSTDString::GetUncompressedSize(TSSlice data, uint64_t count) const {
+  if (!HasGeneralCompressionHeader(data, "ZSTD get uncompressed size")) {
+    return static_cast<size_t>(-1);
+  }
   uint64_t org_size = DecodeFixed64(data.data);
   return org_size == 0 ? -1 : org_size;
 }
 
 bool ZLIBString::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const {
+  out->clear();
   if (data.len == 0) {
     out->append(data);
     return true;
@@ -1021,6 +1057,9 @@ bool ZLIBString::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) con
     *out = TsSliceGuard(data);
     return true;
   }
+  if (!HasGeneralCompressionHeader(data, "Zlib decompress")) {
+    return false;
+  }
   z_stream zs;
   memset(&zs, 0, sizeof(zs));
   if (inflateInit(&zs) != Z_OK) {
@@ -1033,8 +1072,8 @@ bool ZLIBString::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) con
   zs.next_out = reinterpret_cast<Bytef*>(builder.data());
   zs.avail_out = org_size;
 
-  zs.next_in = reinterpret_cast<Bytef*>(data.data + 8);
-  zs.avail_in = data.len - 8;
+  zs.next_in = reinterpret_cast<Bytef*>(data.data + kGeneralCompressionHeaderSize);
+  zs.avail_in = data.len - kGeneralCompressionHeaderSize;
 
   int  ret = inflate(&zs, Z_FINISH);
   if (ret != Z_STREAM_END) {
@@ -1048,18 +1087,22 @@ bool ZLIBString::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) con
 }
 
 size_t ZLIBString::GetUncompressedSize(TSSlice data, uint64_t count) const {
+  if (!HasGeneralCompressionHeader(data, "Zlib get uncompressed size")) {
+    return static_cast<size_t>(-1);
+  }
   uint64_t org_size = DecodeFixed64(data.data);
   return org_size == 0 ? -1 : org_size;
 }
 
-void CompressorManager::TwoLevelCompressor::Compress(TSSlice raw, const TsBitmapBase *bitmap, uint32_t count,
+bool CompressorManager::TwoLevelCompressor::Compress(TSSlice raw, const TsBitmapBase *bitmap, uint32_t count,
                                                      TsBufferBuilder *out, int level) const {
+  out->clear();
   auto first = first_algo_;
   auto second = second_algo_;
   if (IsPlain()) {
     EncodeAlgorithm(out, first, second);
     out->append(raw);
-    return;
+    return true;
   }
   TsBufferBuilder buf1;
   TSSlice data;
@@ -1077,7 +1120,7 @@ void CompressorManager::TwoLevelCompressor::Compress(TSSlice raw, const TsBitmap
   if (second_ == nullptr) {
     EncodeAlgorithm(out, first, second);
     out->append(data);
-    return;
+    return true;
   }
   TsBufferBuilder buf2;
   ok = second_->Compress(data, &buf2, level);
@@ -1088,6 +1131,7 @@ void CompressorManager::TwoLevelCompressor::Compress(TSSlice raw, const TsBitmap
   }
   EncodeAlgorithm(out, first, second);
   out->append(data);
+  return true;
 }
 bool CompressorManager::TwoLevelCompressor::Decompress(TSSlice raw, const TsBitmapBase *bitmap, uint32_t count,
                                                        TsSliceGuard *out) const {
@@ -1149,7 +1193,7 @@ CompressorManager::CompressorManager() {
   default_algs_[DATATYPE::BOOL] = {TsCompAlg::kBitPacking, second};
 
   /* customized pre-defined levels */
-  // lz4: no need
+  // lz4: level is ignored when using LZ4_compress_default.
   // snappy: no need
   // zstd:
   static constexpr int ZSTD_CLEVEL_LOW = 1;
@@ -1159,7 +1203,8 @@ CompressorManager::CompressorManager() {
   static constexpr int Z_CLEVEL_MEDIUM = 6;
 
   algs_level_[GenCompAlg::kPlain] = {1, 1, 1, 1};
-  algs_level_[GenCompAlg::kLz4] = {LZ4HC_CLEVEL_DEFAULT, LZ4HC_CLEVEL_MIN, LZ4HC_CLEVEL_DEFAULT, LZ4HC_CLEVEL_MAX};
+  // algs_level_[GenCompAlg::kLz4] = {LZ4HC_CLEVEL_DEFAULT, LZ4HC_CLEVEL_MIN, LZ4HC_CLEVEL_DEFAULT, LZ4HC_CLEVEL_MAX};
+  algs_level_[GenCompAlg::kLz4] = {1, 1, 1, 1};
   algs_level_[GenCompAlg::kSnappy] = {1, 1, 1, 1};
   algs_level_[GenCompAlg::kZstd] = {ZSTD_CLEVEL_MEDIUM, ZSTD_CLEVEL_LOW, ZSTD_CLEVEL_MEDIUM, ZSTD_CLEVEL_HIGH};
   algs_level_[GenCompAlg::kZlib] = {Z_CLEVEL_MEDIUM, Z_BEST_SPEED, Z_CLEVEL_MEDIUM, Z_BEST_COMPRESSION};
@@ -1249,7 +1294,17 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype,
     first = TsCompAlg::kBitPacking;
     break;
   case roachpb::KW_COL_ENCODE_TYPE_CHIMP:
-    first = TsCompAlg::kChimp_64;
+    switch (dtype) {
+    case DATATYPE::FLOAT:
+      first = TsCompAlg::kChimp_32;
+      break;
+    case DATATYPE::DOUBLE:
+      first = TsCompAlg::kChimp_64;
+      break;
+    default:
+      LOG_ERROR("The data type %d does not match chimp algorithm.", dtype);
+      break;
+    }
     break;
   default:
     first = TsCompAlg::kPlain;
@@ -1308,16 +1363,20 @@ bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, 
     case 1:
       second = GenCompAlg::kPlain;
       break;
-    case 3:
+    case 2:
       first = TsCompAlg::kPlain;
       break;
   }
 
   static_assert(sizeof(first) == sizeof(uint16_t));
   static_assert(sizeof(second) == sizeof(uint16_t));
+  auto level_it = algs_level_.find(second);
+  if (level_it == algs_level_.end()) {
+    LOG_ERROR("Invalid general compression algorithm: %d", static_cast<int>(second));
+    return false;
+  }
   auto compressor = GetCompressor(first, second);
-  compressor.Compress(input, bitmap, count, output, algs_level_.at(second)[level]);
-  return true;
+  return compressor.Compress(input, bitmap, count, output, level_it->second[NormalizeCompressionLevel(level)]);
 }
 
 bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, GenCompAlg alg, int level) const {
@@ -1334,9 +1393,15 @@ bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, 
     return false;
   }
   TsBufferBuilder tmp;
-  bool ok = it->second->Compress(input, &tmp, algs_level_.at(alg)[level]);
+  bool ok = it->second->Compress(input, &tmp, algs_level_.at(alg)[NormalizeCompressionLevel(level)]);
   if (!ok) {
     return false;
+  }
+  if (tmp.size() >= input.len) {
+    output->clear();
+    PutFixed16(output, static_cast<uint16_t>(GenCompAlg::kPlain));
+    output->append(input.data, input.len);
+    return true;
   }
   output->append(tmp.AsSlice());
   return true;

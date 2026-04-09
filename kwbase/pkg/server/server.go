@@ -176,18 +176,18 @@ var (
 
 	compressPolicy = settings.RegisterPublicIntSetting(
 		"ts.compress.stage",
-		"compression stage for database: 0 means do not compress, 1 means one stage compression, "+
-			"2 means two stage compression",
-		2)
+		"compression stage for database: 0 means no encoding or compression, 1 means encoding only, "+
+			"2 means compression only, 3 means both encoding and compression",
+		3)
 
 	compressLevel = settings.RegisterPublicStringSetting(
 		"ts.compress.level",
-		"compression level for database's secondary compression: low, medium, high",
+		"compression level for the general compression algorithm: low, medium, high",
 		"medium")
 
 	compressAlgorithm = settings.RegisterPublicStringSetting(
 		"ts.compress.algorithm",
-		"set default general compression algorithm: lz4, zlib, zstd, snappy",
+		"general compression algorithm: lz4, zlib, zstd, snappy, disabled",
 		"lz4")
 
 	compressLastSegment = settings.RegisterPublicBoolSetting(

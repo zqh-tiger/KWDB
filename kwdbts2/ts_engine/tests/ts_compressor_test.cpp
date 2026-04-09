@@ -1,5 +1,6 @@
 #include "ts_compressor.h"
 
+#include <array>
 #include <gtest/gtest.h>
 
 #include <cmath>
@@ -724,6 +725,21 @@ TEST(zlib, CompressDecompress) {
   ASSERT_EQ(origin_size, s.size());
 
   EXPECT_EQ(origin.AsStringView(), s);
+}
+
+TEST(GeneralCompression, RejectTruncatedHeader) {
+  std::array<char, 7> truncated{};
+  TSSlice input{truncated.data(), truncated.size()};
+  kwdbts::TsSliceGuard out;
+
+  EXPECT_FALSE(kwdbts::LZ4String::GetInstance().Decompress(input, 0, &out));
+  EXPECT_EQ(kwdbts::LZ4String::GetInstance().GetUncompressedSize(input, 0), static_cast<size_t>(-1));
+
+  EXPECT_FALSE(kwdbts::ZSTDString::GetInstance().Decompress(input, 0, &out));
+  EXPECT_EQ(kwdbts::ZSTDString::GetInstance().GetUncompressedSize(input, 0), static_cast<size_t>(-1));
+
+  EXPECT_FALSE(kwdbts::ZLIBString::GetInstance().Decompress(input, 0, &out));
+  EXPECT_EQ(kwdbts::ZLIBString::GetInstance().GetUncompressedSize(input, 0), static_cast<size_t>(-1));
 }
 
 // Float & Double

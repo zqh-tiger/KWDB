@@ -15,6 +15,7 @@
 #include <zstd.h>
 #include <zlib.h>
 #include <cstddef>
+#include <cstring>
 #include <cstdint>
 #include <string>
 #include <type_traits>
@@ -251,7 +252,7 @@ class ConcreateTsCompressor : public TsCompressorBase {
 
     TsBufferBuilder valid_data;
     const char *data = raw.data;
-    out->reserve(bitmap->GetValidCount() * stride);
+    valid_data.reserve(bitmap->GetValidCount() * stride);
     for (int i = 0; i < count; ++i) {
       if ((*bitmap)[i] != kValid) continue;
       valid_data.append(data + i * stride, stride);
@@ -275,14 +276,12 @@ class ConcreateTsCompressor : public TsCompressorBase {
 
     assert(buf.size() == bitmap->GetValidCount() * stride);
     const char *ptr = buf.data();
-    std::string empty_buf(stride, 0);
     TsBufferBuilder builder;
+    builder.resize(static_cast<size_t>(count) * stride);
     for (int i = 0; i < count; ++i) {
       if ((*bitmap)[i] == kValid) {
-        builder.append(ptr, stride);
+        std::memcpy(builder.data() + static_cast<size_t>(i) * stride, ptr, stride);
         ptr += stride;
-      } else {
-        builder.append(empty_buf);
       }
     }
     *out = builder.GetBuffer();
