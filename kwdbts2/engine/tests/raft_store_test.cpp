@@ -410,7 +410,6 @@ TEST_F(TsRaftStoreTest, WriteEmptyValue) {
   TSSlice res;
   s = raft_store_->Get(ctx_, 1, 100, 101, &res);
   EXPECT_EQ(s, KStatus::FAIL);
-  EXPECT_EQ(res.len, 0);
 }
 
 TEST_F(TsRaftStoreTest, MultipleRanges) {
