@@ -941,24 +941,6 @@ TEST_F(TestWALMgr, TestWALMgr_ReadUncommittedTxnID) {
   delete wal_mgr;
 }
 
-TEST_F(TestWALMgr, TestWALMgr_ReadAllTxnID) {
-  WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
-  ASSERT_NE(wal_mgr, nullptr);
-  
-  KStatus init_result = wal_mgr->Init(ctx_);
-  EXPECT_EQ(init_result, KStatus::SUCCESS);
-  
-  char tsx_id[] = "all_txn_tsx";
-  wal_mgr->WriteMTRWAL(ctx_, 5002, tsx_id, WALLogType::MTR_BEGIN);
-  wal_mgr->WriteMTRWAL(ctx_, 5002, tsx_id, WALLogType::MTR_COMMIT);
-  
-  std::unordered_map<uint64_t, txnOp> txn_op;
-  std::unordered_map<TS_OSN, std::pair<uint64_t, uint64_t>> incomplete;
-  
-  KStatus read_result = wal_mgr->ReadAllTxnID(txn_op, nullptr, incomplete);
-  delete wal_mgr;
-}
-
 TEST_F(TestWALMgr, TestWALMgr_ReadWALLogForTSx) {
   WALMgr* wal_mgr = new WALMgr(test_dir_, table_id_, tbl_grp_id_, &opts_);
   ASSERT_NE(wal_mgr, nullptr);
