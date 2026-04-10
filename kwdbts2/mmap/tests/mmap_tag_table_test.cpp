@@ -26,7 +26,7 @@
 class TestTagTable : public testing::Test {
  protected:
   static void SetUpTestCase() {
-    mkdir("/tmp/kwdb_mmap_test", 0755);
+    system("mkdir -p /tmp/kwdb_mmap_test");
   }
 
   static void TearDownTestCase() {
@@ -40,7 +40,8 @@ class TestTagTable : public testing::Test {
     table_id_ = 1001;
     entity_group_id_ = 1;
     table_version_ = 1;
-    mkdir((db_path_ + tbl_sub_path_).c_str(), 0755);
+    
+    system(("mkdir -p " + db_path_ + tbl_sub_path_).c_str());
 
     schema_.clear();
     TagInfo ptag_info;
