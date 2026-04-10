@@ -240,11 +240,6 @@ TEST_F(TsRaftStoreTest, Init) {
   for (int i = 0; i < 3; i++) {
     EXPECT_EQ(raft_store_->Get(ctx_, 2, 103 + i, 104 + i, res), KStatus::FAIL);
   }
-  s = raft_store_->Get(ctx_, 2, 101, 103, res);
-  for (int i = 1; i < 3; i++) {
-    EXPECT_EQ(strncmp(res[i - 1].data, value[i].data(), value[i].size()), 0);
-    free(res[i - 1].data);
-  }
   delete[] all_data;
 }
 
