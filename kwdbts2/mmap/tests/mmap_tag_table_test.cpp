@@ -35,8 +35,11 @@ class TestTagTable : public testing::Test {
   }
 
   void SetUp() override {
-    test_path_ = "/tmp/kwdb_mmap_test/tag_table";
-    db_path_ = "/tmp/kwdb_mmap_test/";
+    // Use unique test path for each test to avoid race conditions
+    static std::atomic<uint64_t> test_counter{0};
+    uint64_t unique_id = test_counter.fetch_add(1);
+    test_path_ = "/tmp/kwdb_mmap_test/tag_table_" + std::to_string(unique_id);
+    db_path_ = "/tmp/kwdb_mmap_test/tag_table_" + std::to_string(unique_id) + "/";
     tbl_sub_path_ = "sub_path/";
     table_id_ = 1001;
     entity_group_id_ = 1;
