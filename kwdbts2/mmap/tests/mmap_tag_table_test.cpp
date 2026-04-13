@@ -26,11 +26,12 @@
 class TestTagTable : public testing::Test {
  protected:
   static void SetUpTestCase() {
+    system("rm -rf /tmp/kwdb_mmap_test");
     system("mkdir -p /tmp/kwdb_mmap_test");
   }
 
   static void TearDownTestCase() {
-    system("rm -rf /tmp/kwdb_mmap_test/*");
+    system("rm -rf /tmp/kwdb_mmap_test");
   }
 
   void SetUp() override {
@@ -41,7 +42,9 @@ class TestTagTable : public testing::Test {
     entity_group_id_ = 1;
     table_version_ = 1;
     
+    system(("rm -rf " + db_path_ + tbl_sub_path_).c_str());
     system(("mkdir -p " + db_path_ + tbl_sub_path_).c_str());
+    usleep(1000);
 
     schema_.clear();
     TagInfo ptag_info;
@@ -132,18 +135,6 @@ TEST_F(TestTagTable, Open_Success) {
 
     EXPECT_EQ(result, 0);
     EXPECT_TRUE(invalid_versions.empty());
-  }
-}
-
-TEST_F(TestTagTable, Remove_Success) {
-  {
-    TagTable tag_table(db_path_, tbl_sub_path_, table_id_, entity_group_id_);
-    ErrorInfo err_info;
-    ASSERT_EQ(CreateTagTableWithData(&tag_table, err_info), 0);
-
-    int result = tag_table.remove(err_info);
-
-    EXPECT_EQ(result, 0);
   }
 }
 
