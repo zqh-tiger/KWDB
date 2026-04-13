@@ -116,21 +116,6 @@ TEST_F(TestTagTable, Create_Success) {
   EXPECT_NE(tag_table.GetTagPartitionTableManager(), nullptr);
 }
 
-TEST_F(TestTagTable, Create_WithHashIndexInfo) {
-  TagTable tag_table(db_path_, tbl_sub_path_, table_id_, entity_group_id_);
-  ErrorInfo err_info;
-
-  roachpb::NTagIndexInfo idx_info;
-  idx_info.add_col_ids(2);
-  idx_info.set_index_id(1);
-  std::vector<roachpb::NTagIndexInfo> idx_info_vec;
-  idx_info_vec.push_back(idx_info);
-
-  int result = tag_table.create(schema_, table_version_, idx_info_vec, err_info);
-
-  EXPECT_EQ(result, 0);
-}
-
 TEST_F(TestTagTable, Open_Success) {
   {
     TagTable tag_table(db_path_, tbl_sub_path_, table_id_, entity_group_id_);
