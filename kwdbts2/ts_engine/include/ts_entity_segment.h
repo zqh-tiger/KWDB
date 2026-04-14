@@ -13,22 +13,17 @@
 #include <algorithm>
 #include <cstdint>
 #include <list>
-#include <map>
 #include <memory>
 #include <string>
-#include <type_traits>
 #include <utility>
 #include <vector>
-#include <unordered_map>
 
 #include "ts_block.h"
-#include "ts_compressor.h"
-#include "ts_engine_schema_manager.h"
+#include "ts_compatibility.h"
 #include "ts_entity_segment_data.h"
 #include "ts_entity_segment_handle.h"
 #include "ts_io.h"
-#include "ts_lastsegment.h"
-#include "ts_version.h"
+#include "ts_segment.h"
 
 namespace kwdbts {
 
@@ -210,8 +205,8 @@ class TsEntitySegmentMetaManager {
   KStatus GetBlockSpans(const TsBlockItemFilterParams& filter, const std::shared_ptr<TsEntitySegment>& entity_segment,
                         std::list<shared_ptr<TsBlockSpan>>& block_spans,
                         const std::shared_ptr<TsTableSchemaManager>& tbl_schema_mgr,
-                        const std::shared_ptr<MMapMetricsTable>& scan_schema,
-                        TsScanStats* ts_scan_stats = nullptr);
+                        const std::shared_ptr<MMapMetricsTable>& scan_schema, TsScanStats* ts_scan_stats = nullptr,
+                        uint64_t min_readable_block_id = 0);
 
   void MarkDeleteEntityHeader() { entity_header_.MarkDelete(); }
 
@@ -226,11 +221,20 @@ struct TsEntitySegmentBlockInfo {
   TsSliceGuard col_agg_offset{};
 };
 
+#define COLUMN_BLOCK_BUFFER_READY   1
+#define COLUMN_BLOCK_AGG_READY      2
+
 struct TsEntitySegmentColumnBlock {
   std::unique_ptr<TsBitmapBase> bitmap;
   TsSliceGuard buffer;
   TsSliceGuard agg;
   std::vector<std::string> var_rows;
+
+  /***
+   * first bit of ready_flag indicates buffer readiness, 1: ready, 0: not ready.
+   * second bit of ready_flag indicates agg readiness, 1: ready, 0: not ready.
+   */
+  std::atomic<uint8_t> ready_flag{0};
 };
 
 class TsSegmentBlockContainer;
@@ -313,7 +317,7 @@ class TsEntityBlock : public TsBlock {
 
   inline bool HasAggDataNoLock(int32_t col_idx) {
     return column_blocks_.size() > col_idx + 1 && column_blocks_[col_idx + 1] != nullptr
-            && !column_blocks_[col_idx + 1]->agg.empty();
+            && (column_blocks_[col_idx + 1]->ready_flag & COLUMN_BLOCK_AGG_READY);
   }
 
   inline bool HasAggData(int32_t col_idx) {
@@ -323,7 +327,7 @@ class TsEntityBlock : public TsBlock {
   inline bool HasDataCachedNoLock(int32_t col_idx) {
     assert(col_idx >= -1);
     return column_blocks_.size() > col_idx + 1 && column_blocks_[col_idx + 1] != nullptr
-            && !column_blocks_[col_idx + 1]->buffer.empty();
+            && (column_blocks_[col_idx + 1]->ready_flag & COLUMN_BLOCK_BUFFER_READY);
   }
 
   inline bool HasDataCached(int32_t col_idx) {
@@ -435,8 +439,9 @@ class TsSegmentFile {
   }
 
   uint64_t GetEntityNum() { return meta_mgr_.GetEntityNum(); }
+  uint64_t GetBlockNum() { return meta_mgr_.GetBlockNum(); }
 
-  KStatus GetMaxOSN(TSEntityID entity_id, TS_OSN& max_osn) {
+  KStatus GetMaxOSN(TSEntityID entity_id, TS_OSN& max_osn, uint64_t min_readable_block_id) {
     max_osn = 0;
     std::vector<TsEntitySegmentBlockItemWithData> blk_items;
     KStatus s = meta_mgr_.GetAllBlockItems(entity_id, &blk_items);
@@ -444,6 +449,7 @@ class TsSegmentFile {
       return s;
     }
     for (auto& blk_item : blk_items) {
+      if (blk_item.block_item->block_id < min_readable_block_id) continue;
       max_osn = std::max(max_osn, blk_item.block_item->max_osn);
     }
     return KStatus::SUCCESS;
@@ -453,17 +459,17 @@ class TsSegmentFile {
     return meta_mgr_.GetAllBlockItems(entity_id, blk_items);
   }
 
-  KStatus GetBlockSpans(const TsBlockItemFilterParams& filter,
-                                          const std::shared_ptr<TsEntitySegment>& entity_segment,
-                                          std::list<shared_ptr<TsBlockSpan>>& block_spans,
-                                          const std::shared_ptr<TsTableSchemaManager>& tbl_schema_mgr,
-                                          const std::shared_ptr<MMapMetricsTable>& scan_schema,
-                                          TsScanStats* ts_scan_stats) {
+  KStatus GetBlockSpans(const TsBlockItemFilterParams& filter, const std::shared_ptr<TsEntitySegment>& entity_segment,
+                        std::list<shared_ptr<TsBlockSpan>>& block_spans,
+                        const std::shared_ptr<TsTableSchemaManager>& tbl_schema_mgr,
+                        const std::shared_ptr<MMapMetricsTable>& scan_schema, TsScanStats* ts_scan_stats,
+                        uint64_t min_readable_block_id = 0) {
     if (filter.entity_id > meta_mgr_.GetEntityNum()) {
       // LOG_WARN("entity id [%lu] > entity number [%lu]", filter.entity_id, meta_mgr_.GetEntityNum());
       return KStatus::SUCCESS;
     }
-    return meta_mgr_.GetBlockSpans(filter, entity_segment, block_spans, tbl_schema_mgr, scan_schema, ts_scan_stats);
+    return meta_mgr_.GetBlockSpans(filter, entity_segment, block_spans, tbl_schema_mgr, scan_schema, ts_scan_stats,
+                                   min_readable_block_id);
   }
 
   KStatus GetBlockData(TsEntityBlock* block, TsSliceGuard* data);
@@ -522,10 +528,11 @@ class TsEntitySegment : public TsSegmentBase, public enable_shared_from_this<TsE
     return segment_file_->SetEntityItemDropped(entity_id);
   }
 
+  uint64_t GetBlockNum() { return segment_file_->GetBlockNum(); }
   uint64_t GetEntityNum() { return segment_file_->GetEntityNum(); }
 
-  KStatus GetMaxOSN(TSEntityID entity_id, TS_OSN& max_osn) {
-    return segment_file_->GetMaxOSN(entity_id, max_osn);
+  KStatus GetMaxOSN(TSEntityID entity_id, TS_OSN& max_osn, uint64_t min_readable_block_id = 0) {
+    return segment_file_->GetMaxOSN(entity_id, max_osn, min_readable_block_id);
   }
 
   std::shared_ptr<TsSegmentBlockContainer>& GetSegmentBlockContainer() {
@@ -551,11 +558,20 @@ class TsEntitySegment : public TsSegmentBase, public enable_shared_from_this<TsE
 
   KStatus GetBlockSpans(const TsBlockItemFilterParams& filter, std::list<shared_ptr<TsBlockSpan>>& block_spans,
                         const std::shared_ptr<TsTableSchemaManager>& tbl_schema_mgr,
+                        const std::shared_ptr<MMapMetricsTable>& scan_schema, uint64_t min_readable_block_id,
+                        TsScanStats* ts_scan_stats = nullptr) {
+    std::shared_ptr<TsEntitySegment> entity_segment = shared_from_this();
+    return segment_file_->GetBlockSpans(filter, entity_segment, block_spans, tbl_schema_mgr, scan_schema, ts_scan_stats,
+                                        min_readable_block_id);
+  }
+
+  KStatus GetBlockSpans(const TsBlockItemFilterParams& filter, std::list<shared_ptr<TsBlockSpan>>& block_spans,
+                        const std::shared_ptr<TsTableSchemaManager>& tbl_schema_mgr,
                         const std::shared_ptr<MMapMetricsTable>& scan_schema,
                         TsScanStats* ts_scan_stats = nullptr) override {
     std::shared_ptr<TsEntitySegment> entity_segment = shared_from_this();
-    return segment_file_->GetBlockSpans(filter, entity_segment, block_spans, tbl_schema_mgr,
-                                        scan_schema, ts_scan_stats);
+    return segment_file_->GetBlockSpans(filter, entity_segment, block_spans, tbl_schema_mgr, scan_schema,
+                                        ts_scan_stats);
   }
 
   const EntitySegmentMetaInfo &GetHandleInfo() const { return segment_file_->GetHandleInfo(); }

@@ -778,6 +778,9 @@ KStatus WALMgr::ReadWALLog(std::vector<LogEntry*>& logs, TS_OSN start_lsn, TS_OS
   uint64_t cur_end_lsn;
   while (cur_start_lsn < end_lsn) {
     cur_end_lsn = file_mgr_->GetLSNFromBlockNo(cur_end_block);
+    if (cur_end_lsn == 0) {
+      return FAIL;
+    }
     if (cur_end_lsn > end_lsn || cur_end_block == end_block) {
       cur_end_lsn = end_lsn;
     }
@@ -822,6 +825,9 @@ KStatus WALMgr::ReadWALLogAndApply(std::vector<LogEntry*>& logs, TS_OSN start_ls
   uint64_t cur_end_lsn;
   while (cur_start_lsn < end_lsn) {
     cur_end_lsn = file_mgr_->GetLSNFromBlockNo(cur_end_block);
+    if (cur_end_lsn == 0) {
+      return FAIL;
+    }
     if (cur_end_lsn > end_lsn || cur_end_block == end_block) {
       cur_end_lsn = end_lsn;
     }
@@ -914,6 +920,9 @@ KStatus WALMgr::ReadWALLogForMtr(uint64_t mtr_trans_id, std::vector<LogEntry*>& 
   uint64_t cur_end_lsn;
   while (cur_start_lsn < last_lsn) {
     cur_end_lsn = file_mgr_->GetLSNFromBlockNo(cur_end_block);
+    if (cur_end_lsn == 0) {
+      return FAIL;
+    }
     if (cur_end_lsn > last_lsn || cur_end_block == end_block) {
       cur_end_lsn = last_lsn;
     }
@@ -958,6 +967,9 @@ KStatus WALMgr::ReadUncommittedTxnID(std::vector<uint64_t>& uncommitted_xid) {
   uint64_t cur_end_lsn;
   while (cur_start_lsn < last_lsn) {
     cur_end_lsn = file_mgr_->GetLSNFromBlockNo(cur_end_block);
+    if (cur_end_lsn == 0) {
+      return FAIL;
+    }
     if (cur_end_lsn > last_lsn || cur_end_block == end_block) {
       cur_end_lsn = last_lsn;
     }
@@ -1003,6 +1015,9 @@ KStatus WALMgr::ReadAllTxnID(std::unordered_map<uint64_t, txnOp>& txn_op, TsVGro
   uint64_t cur_end_lsn;
   while (cur_start_lsn < last_lsn) {
     cur_end_lsn = file_mgr_->GetLSNFromBlockNo(cur_end_block);
+    if (cur_end_lsn == 0) {
+      return FAIL;
+    }
     if (cur_end_lsn > last_lsn || cur_end_block == end_block) {
       cur_end_lsn = last_lsn;
     }

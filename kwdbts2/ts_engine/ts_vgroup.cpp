@@ -17,13 +17,11 @@
 #include <cstring>
 #include <memory>
 #include <algorithm>
-#include <numeric>
 #include <sstream>
 #include <thread>
 #include <unordered_set>
 #include <utility>
 #include <vector>
-#include <regex>
 #include <shared_mutex>
 #include <list>
 #include <string>
@@ -370,31 +368,31 @@ KStatus TsVGroup::redoPut(kwdbContext_p ctx, kwdbts::TS_OSN log_lsn, const TSSli
       return KStatus::FAIL;
     }
     OperateType type;
-    TS_OSN op_osn;
+    TS_OSN op_osn = 0;
     if (!p_tag->GetOpTypeAtOSN(row_info.second, p.GetOSN(), type, op_osn)) {
-      LOG_INFO("GetOpTypeAtOSN empty.table [%lu], tag[%lu,%lu], ignore.", table_id, row_info.first, row_info.second);
+      LOG_INFO("GetOpTypeAtOSN empty.table [%lu], tag[%lu,%lu], creat osn [%lu] payload osn[%lu], ignore.",
+       table_id, row_info.first, row_info.second, op_osn, p.GetOSN());
       tag_idx_row_ok = false;
     } else {
       tag_idx_row_ok = true;
     }
   }
+  bool find_in_history = false;
   if (!tag_idx_row_ok) {
     uint32_t cur_entity_id;
     auto tag_row = tb_schema_manager->GetTagTable()->ScanTagByPKey(primary_key, p.GetOSN(),
       p.GetHashPoint(), vgroup_id, cur_entity_id);
     if (tag_row.first != INVALID_TABLE_VERSION_ID) {
-      new_tag = false;
+      find_in_history = true;
       entity_id = cur_entity_id;
-    } else {
-      new_tag = true;
     }
   }
-  if (new_tag) {
+  if (new_tag && !find_in_history) {
     vgroup_id = GetVGroupID();
     entity_id = AllocateEntityID();
     // 1. Write tag data
     assert(payload_data_flag == DataTagFlag::DATA_AND_TAG || payload_data_flag == DataTagFlag::TAG_ONLY);
-    LOG_DEBUG("tag bt insert hashPoint=%hu", p.GetHashPoint());
+    LOG_INFO("tag bt insert hashPoint=%hu, payload osn[%lu], log osn [%lu]", p.GetHashPoint(), p.GetOSN(), osn);
     std::shared_ptr<TagTable> tag_table;
     s = tb_schema_manager->GetTagSchema(ctx, &tag_table);
     if (s != KStatus::SUCCESS) {
@@ -716,7 +714,8 @@ void TsVGroup::closeCompactThread() {
   }
 }
 
-KStatus TsVGroup::PartitionCompact(std::shared_ptr<const TsPartitionVersion> partition, bool call_by_vacuum) {
+KStatus TsVGroup::PartitionCompact(std::shared_ptr<const TsPartitionVersion> partition,
+                                   bool call_by_vacuum, bool force_vacuum) {
   TsIOEnv* env = &TsIOEnv::GetInstance();
   auto partition_id = partition->GetPartitionIdentifier();
   if (!partition->TrySetBusy(PartitionStatus::Compacting)) {
@@ -735,7 +734,7 @@ KStatus TsVGroup::PartitionCompact(std::shared_ptr<const TsPartitionVersion> par
   if (!call_by_vacuum) {
     last_segments = partition->GetCompactLastSegments(&level, &group);
   } else {
-    last_segments = partition->GetAllLastSegments();
+    last_segments = partition->GetVacuumLastSegments(force_vacuum);
   }
   if (last_segments.empty()) {
     return KStatus::SUCCESS;
@@ -989,7 +988,11 @@ static KStatus FlushToLastSegment(TsIOEnv* env, TsEngineSchemaManager* schema_mg
       return FAIL;
     }
   }
-  tl_lastseg_builder->Finalize(stats);
+  s = tl_lastseg_builder->Finalize(stats);
+  if (s == FAIL) {
+    LOG_ERROR("flush failed, TsLastSegmentBuilder finalize failed.");
+    return s;
+  }
   update->AddLastSegment(partition->GetPartitionIdentifier(), LastSegmentMetaInfo{lastseg_file_number, 0, 0});
   return SUCCESS;
 }
@@ -1114,7 +1117,7 @@ KStatus TsVGroup::FlushImmSegment(const std::shared_ptr<TsMemSegment>& mem_seg) 
       total_last_stats += lastseg_stats;
     }
   }
-  update.RemoveMemSegment(mem_seg);
+  update.RemoveMemSegment(mem_seg->GetId());
 
   for (auto& [par_id, info] : flush_infos) {
     uint64_t file_number = version_manager_->NewFileNumber();
@@ -1156,7 +1159,8 @@ KStatus TsVGroup::GetIterator(kwdbContext_p ctx, uint32_t version, vector<uint32
                               const std::shared_ptr<MMapMetricsTable>& schema, TsStorageIterator** iter,
                               const std::shared_ptr<TsVGroup>& vgroup,
                               const std::vector<timestamp64>& ts_points,
-                              bool reverse, bool sorted, TS_OSN scan_osn, const FillParams& fill_params) {
+                              bool reverse, bool sorted, TS_OSN scan_osn, const FillParams& fill_params,
+                              const TimeBucketInfo time_bucket_info) {
   // TODO(liuwei) update to use read_lsn to fetch Metrics data optimistically.
   // if the read_lsn is 0, ignore the read lsn checking and return all data (it's no WAL support
   // case). TS_OSN read_lsn = GetOptimisticReadLsn();
@@ -1171,7 +1175,8 @@ KStatus TsVGroup::GetIterator(kwdbContext_p ctx, uint32_t version, vector<uint32
   } else {
     // need call Next function times: entity_ids.size(), no matter Next return what.
     ts_iter = new TsAggIteratorImpl(vgroup, version, entity_ids, ts_spans, block_filter, scan_cols, ts_scan_cols,
-                                      agg_extend_cols, scan_agg_types, ts_points, table_schema_mgr, schema, scan_osn);
+                                      agg_extend_cols, scan_agg_types, ts_points, table_schema_mgr, schema,
+                                      scan_osn, time_bucket_info);
   }
   KStatus s = ts_iter->Init(reverse);
   if (s != KStatus::SUCCESS) {
@@ -1873,7 +1878,7 @@ KStatus TsVGroup::redoPutTag(kwdbContext_p ctx, kwdbts::TS_OSN log_lsn, const TS
     uint32_t cur_entity_id;
     auto ptag_value = tag_table->ScanTagByPKey(primary_key, p.GetOSN(), p.GetHashPoint(), vgroup_id, cur_entity_id);
     if (ptag_value.first == INVALID_TABLE_VERSION_ID) {
-      LOG_DEBUG("tag bt insert hashPoint=%hu", p.GetHashPoint());
+      LOG_INFO("tag bt insert hashPoint=%hu, OSN=%lu", p.GetHashPoint(), p.GetOSN());
       auto err_no = tag_table->InsertTagRecord(p, vgroup_id, entity_id, p.GetOSN(), OperateType::Insert);
       if (err_no < 0) {
         LOG_ERROR("InsertTagRecord failed, table id[%lu]", table_id);
@@ -2110,7 +2115,7 @@ KStatus TsVGroup::Vacuum(kwdbContext_p ctx, bool force) {
       bool need_vacuum = false;
       if (partition->GetLastSegmentsCount() != 0) {
         // force compact historical partition
-        s = PartitionCompact(partition, true);
+        s = PartitionCompact(partition, true, force);
         if (s != SUCCESS) {
           LOG_ERROR("PartitionCompact failed, [%s]", partition->GetPartitionIdentifierStr().c_str());
           continue;

@@ -22,7 +22,6 @@
 #include "ee_global.h"
 #include "payload_builder.h"
 
-extern bool g_go_start_service;
 namespace kwdbts {
 
 KStatus TsTable::GetLastRowBatch(kwdbContext_p ctx, uint32_t table_version, std::vector<uint32_t> scan_cols,
@@ -74,14 +73,7 @@ KStatus TsTable::Create(kwdbContext_p ctx, vector<AttributeInfo>& metric_schema,
       return KStatus::FAIL;
     }
   }
-
   hash_num_ = hash_num;
-  ErrorInfo err_info;
-
-  if (err_info.errcode < 0) {
-    LOG_ERROR("createTable fail, table_id[%lu], msg[%s]", table_id_, err_info.errmsg.c_str());
-  }
-
   return KStatus::SUCCESS;
 }
 
