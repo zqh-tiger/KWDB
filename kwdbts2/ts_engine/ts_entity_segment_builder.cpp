@@ -276,9 +276,9 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
     TsBitmapBase* b = has_bitmap ? block.bitmap.get() : nullptr;
     // compress col data & write to buffer
     if (0 == col_idx) {
-      attr_info.encode_type = roachpb::KW_COL_ENCODE_TYPE_SIMPLE8B;
-      attr_info.compress_type = roachpb::KW_COL_COMPRESS_TYPE_DISABLED;
-      attr_info.compress_level = roachpb::KW_COL_COMPRESS_LEVEL_UNSPECIFIED;
+      attr_info.encode_algo = roachpb::ENCODE_ALGO_SIMPLE8B;
+      attr_info.compress_algo = roachpb::COMPRESS_ALGO_DISABLED;
+      attr_info.compress_level = roachpb::COMPRESS_LEVEL_UNSPECIFIED;
     } else {
       attr_info = metric_schema_[col_idx - 1];
     }

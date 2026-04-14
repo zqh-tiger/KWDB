@@ -4088,13 +4088,13 @@ func (desc *ColumnDescriptor) SQLString() string {
 		}
 		f.WriteString(s)
 	}
-	if desc.TsCol.EncodeType != nil {
+	if desc.TsCol.EncodeAlgo != nil {
 		f.WriteString(" ENCODE ")
-		f.WriteString(strings.ToUpper(*desc.TsCol.EncodeType))
+		f.WriteString(strings.ToUpper(*desc.TsCol.EncodeAlgo))
 	}
-	if desc.TsCol.CompressType != nil {
+	if desc.TsCol.CompressAlgo != nil {
 		f.WriteString(" COMPRESS ")
-		f.WriteString(strings.ToUpper(*desc.TsCol.CompressType))
+		f.WriteString(strings.ToUpper(*desc.TsCol.CompressAlgo))
 		if desc.TsCol.CompressLevel != nil {
 			f.WriteString(" LEVEL ")
 			level := strings.ToUpper(*desc.TsCol.CompressLevel)

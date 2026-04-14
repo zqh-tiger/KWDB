@@ -56,8 +56,8 @@ type TableTypeMap map[tree.TableType]int
 
 // CompressInfo is ts column compress information.
 type CompressInfo struct {
-	EncodeType    *string
-	CompressType  *string
+	EncodeAlgo    *string
+	CompressAlgo  *string
 	CompressLevel *string
 }
 
@@ -560,11 +560,11 @@ func MakeTSColumnDefDescs(
 
 // checkColumnCompress checks whether the encode type and compress type are valid.
 func (col *ColumnDescriptor) checkColumnCompress(compressInfo CompressInfo) error {
-	encodeType := compressInfo.EncodeType
-	compressType := compressInfo.CompressType
+	encodeAlgo := compressInfo.EncodeAlgo
+	compressAlgo := compressInfo.CompressAlgo
 	compressLevel := compressInfo.CompressLevel
-	if encodeType != nil {
-		enType := strings.ToLower(*encodeType)
+	if encodeAlgo != nil {
+		enType := strings.ToLower(*encodeAlgo)
 		if enType != "disabled" {
 			switch col.Type.Oid() {
 			case oid.T_int2, oid.T_int4, oid.T_int8, oid.T_timestamp, oid.T_timestamptz:
@@ -583,19 +583,19 @@ func (col *ColumnDescriptor) checkColumnCompress(compressInfo CompressInfo) erro
 				return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support encode type %s", col.Type.Name(), enType)
 			}
 		}
-		col.TsCol.EncodeType = &enType
+		col.TsCol.EncodeAlgo = &enType
 	}
-	if compressType != nil {
-		cpType := strings.ToLower(*compressType)
+	if compressAlgo != nil {
+		cpType := strings.ToLower(*compressAlgo)
 		switch cpType {
 		case "lz4", "zlib", "zstd", "snappy", "disabled":
-			col.TsCol.CompressType = &cpType
+			col.TsCol.CompressAlgo = &cpType
 		default:
 			return pgerror.Newf(pgcode.FeatureNotSupported, "type %s does not support compress type %s", col.Type.Name(), cpType)
 		}
 	}
 	if compressLevel != nil {
-		if col.TsCol.CompressType != nil && *col.TsCol.CompressType == "disabled" {
+		if col.TsCol.CompressAlgo != nil && *col.TsCol.CompressAlgo == "disabled" {
 			return pgerror.New(pgcode.FeatureNotSupported, "can not set level when compress type is disabled")
 		}
 		cpLevel := strings.ToLower(*compressLevel)

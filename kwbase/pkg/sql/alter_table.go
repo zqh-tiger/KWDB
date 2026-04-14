@@ -213,8 +213,8 @@ func (n *alterTableNode) startExec(params runParams) error {
 					}
 				}
 				compressInfo := sqlbase.CompressInfo{
-					EncodeType:    d.ColumnEncode.EncodeType,
-					CompressType:  d.ColumnCompress.CompressType,
+					EncodeAlgo:    d.ColumnEncode.EncodeAlgo,
+					CompressAlgo:  d.ColumnCompress.CompressAlgo,
 					CompressLevel: d.ColumnCompress.CompressLevel,
 				}
 				TSColumn, _, err := sqlbase.MakeTSColumnDefDescs(string(d.Name), d.Type, true, n.tableDesc.TsTable.GetSde(), sqlbase.ColumnType_TYPE_DATA, d.DefaultExpr.Expr, &params.p.semaCtx, compressInfo)
@@ -1673,7 +1673,7 @@ func applyColumnMutation(
 	isOnlyMetaChanged := false
 	switch t := mut.(type) {
 	case *tree.AlterTableAlterColumnType:
-		if !tableDesc.IsTSTable() && (t.ToType == nil || t.EncodeType != nil || t.CompressType != nil || t.CompressLevel != nil) {
+		if !tableDesc.IsTSTable() && (t.ToType == nil || t.EncodeAlgo != nil || t.CompressAlgo != nil || t.CompressLevel != nil) {
 			return false, pgerror.Newf(pgcode.FeatureNotSupported,
 				"only support alter column type on %s", tree.TableTypeName(tableDesc.TableType))
 		}
@@ -1694,7 +1694,7 @@ func applyColumnMutation(
 			if t.Using != nil || t.Collation != "" {
 				return false, pgerror.New(pgcode.Syntax, "column and tag in timeseries table does not support USING or COLLATION")
 			}
-			if t.ToType == nil && t.EncodeType == nil && t.CompressType == nil && t.CompressLevel == nil {
+			if t.ToType == nil && t.EncodeAlgo == nil && t.CompressAlgo == nil && t.CompressLevel == nil {
 				return false, pgerror.New(pgcode.Syntax, "can not alter nothing")
 			}
 			if tableDesc.TableType == tree.InstanceTable {
@@ -1709,7 +1709,7 @@ func applyColumnMutation(
 			}
 			var newType *types.T
 			var modifyCompress bool
-			modifyCompress = t.EncodeType != nil || t.CompressType != nil || t.CompressLevel != nil
+			modifyCompress = t.EncodeAlgo != nil || t.CompressAlgo != nil || t.CompressLevel != nil
 			newType = &col.Type
 			if t.ToType != nil {
 				newType = prepareAlterType(t.ToType)
@@ -1729,19 +1729,19 @@ func applyColumnMutation(
 			if !isOnlyMetaChanged {
 				// make compress info to construct new column descriptor
 				compressInfo := sqlbase.CompressInfo{
-					EncodeType:    t.EncodeType,
-					CompressType:  t.CompressType,
+					EncodeAlgo:    t.EncodeAlgo,
+					CompressAlgo:  t.CompressAlgo,
 					CompressLevel: t.CompressLevel,
 				}
 				// if do not alter compress, get compress info from origin column
-				if compressInfo.EncodeType == nil {
-					compressInfo.EncodeType = col.TsCol.EncodeType
+				if compressInfo.EncodeAlgo == nil {
+					compressInfo.EncodeAlgo = col.TsCol.EncodeAlgo
 				}
-				if compressInfo.CompressType == nil {
-					compressInfo.CompressType = col.TsCol.CompressType
+				if compressInfo.CompressAlgo == nil {
+					compressInfo.CompressAlgo = col.TsCol.CompressAlgo
 				}
 				// if set compress type to disabled, we should not set origin column compress level to compress info, we will set level to default.
-				if compressInfo.CompressLevel == nil && (compressInfo.CompressType == nil || strings.ToLower(*compressInfo.CompressType) != "disabled") {
+				if compressInfo.CompressLevel == nil && (compressInfo.CompressAlgo == nil || strings.ToLower(*compressInfo.CompressAlgo) != "disabled") {
 					compressInfo.CompressLevel = col.TsCol.CompressLevel
 				}
 				//var alteringTag sqlbase.ColumnDescriptor

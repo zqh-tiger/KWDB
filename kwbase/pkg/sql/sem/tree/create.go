@@ -432,10 +432,10 @@ type ColumnTableDef struct {
 	}
 	Comment      string
 	ColumnEncode struct {
-		EncodeType *string
+		EncodeAlgo *string
 	}
 	ColumnCompress struct {
-		CompressType  *string
+		CompressAlgo  *string
 		CompressLevel *string
 	}
 }
@@ -554,17 +554,17 @@ func NewColumnTableDef(
 			}
 			d.Comment = string(t)
 		case *ColumnEncode:
-			if d.ColumnEncode.EncodeType != nil {
+			if d.ColumnEncode.EncodeAlgo != nil {
 				return nil, pgerror.Newf(pgcode.Syntax,
 					"multiple encode type specified for column %q", name)
 			}
-			d.ColumnEncode.EncodeType = &t.EncodeType
+			d.ColumnEncode.EncodeAlgo = &t.EncodeAlgo
 		case *ColumnCompress:
-			if d.ColumnCompress.CompressType != nil {
+			if d.ColumnCompress.CompressAlgo != nil {
 				return nil, pgerror.Newf(pgcode.Syntax,
 					"multiple compress type specified for column %q", name)
 			}
-			d.ColumnCompress.CompressType = &t.CompressType
+			d.ColumnCompress.CompressAlgo = &t.CompressAlgo
 			d.ColumnCompress.CompressLevel = t.CompressLevel
 		default:
 			return nil, errors.AssertionFailedf("unexpected column qualification: %T", c)
@@ -691,13 +691,13 @@ func (node *ColumnTableDef) Format(ctx *FmtCtx) {
 		ctx.WriteString(" COMMENT = ")
 		ctx.WriteString(node.Comment)
 	}
-	if node.ColumnEncode.EncodeType != nil {
+	if node.ColumnEncode.EncodeAlgo != nil {
 		ctx.WriteString(" ENCODE ")
-		ctx.WriteString(*node.ColumnEncode.EncodeType)
+		ctx.WriteString(*node.ColumnEncode.EncodeAlgo)
 	}
-	if node.ColumnCompress.CompressType != nil {
+	if node.ColumnCompress.CompressAlgo != nil {
 		ctx.WriteString(" COMPRESS ")
-		ctx.WriteString(*node.ColumnCompress.CompressType)
+		ctx.WriteString(*node.ColumnCompress.CompressAlgo)
 		if node.ColumnCompress.CompressLevel != nil {
 			ctx.WriteString(" LEVEL ")
 			ctx.WriteString(*node.ColumnCompress.CompressLevel)
@@ -761,12 +761,12 @@ type ColumnComment string
 
 // ColumnEncode represents encode type on a column
 type ColumnEncode struct {
-	EncodeType string
+	EncodeAlgo string
 }
 
 // ColumnCompress represents compress type on a column
 type ColumnCompress struct {
-	CompressType  string
+	CompressAlgo  string
 	CompressLevel *string
 }
 
