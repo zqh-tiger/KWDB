@@ -112,7 +112,7 @@ bool TsColumnBlock::GetCompressedData(TsBufferBuilder* out, TsColumnCompressInfo
   // auto [first, second] = mgr.GetDefaultAlgorithm(static_cast<DATATYPE>(col_schema_.type));
   if (isVarLenType(col_schema_.type)) {
     // varchar use simple8b algorithm
-    first = compress ? TsCompAlg::kSimple8B_V2_u32 : TsCompAlg::kPlain;
+    first = compress ? EncodeAlgo::kSimple8B_V2_u32 : EncodeAlgo::kPlain;
 
     /* do not use bitmap to compress offset for varchar, otherwise, the query on varchar column will be wrong
        for example:
@@ -131,8 +131,8 @@ bool TsColumnBlock::GetCompressedData(TsBufferBuilder* out, TsColumnCompressInfo
 
   TSSlice input = fixlen_guard_.AsSlice();
   if (!compress) {
-    first = TsCompAlg::kPlain;
-    second = GenCompAlg::kPlain;
+    first = EncodeAlgo::kPlain;
+    second = CompressAlgo::kPlain;
   }
 
   bool ok = mgr.CompressData(input, p_bitmap, count_, &tmp, first, second, col_schema_.compress_level);
@@ -145,7 +145,7 @@ bool TsColumnBlock::GetCompressedData(TsBufferBuilder* out, TsColumnCompressInfo
   // 3. compress varchar data
   if (!varchar_guard_.empty()) {
     tmp.clear();
-    auto comp_alg = compress ? EngineOptions::compression_algorithm : GenCompAlg::kPlain;
+    auto comp_alg = compress ? EngineOptions::compression_algorithm : CompressAlgo::kPlain;
     ok = mgr.CompressVarchar(varchar_guard_.AsSlice(), &tmp, comp_alg, col_schema_.compress_level);
     if (!ok) {
       return false;

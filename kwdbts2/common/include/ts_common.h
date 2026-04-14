@@ -117,7 +117,7 @@ enum class DedupRule {
   MERGE = 4,     // duplicate by column
 };
 
-enum class TsCompAlg : uint16_t {
+enum class EncodeAlgo : uint16_t {
   kPlain = 0,
   kGorilla_32 = 1,
   kGorilla_64 = 2,
@@ -151,7 +151,7 @@ enum class TsCompAlg : uint16_t {
 };
 
 // compression algorithms for general purpose.
-enum class GenCompAlg : uint16_t {
+enum class CompressAlgo : uint16_t {
   kPlain = 0,
   kSnappy = 1,
   kLz4 = 2,

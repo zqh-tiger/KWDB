@@ -115,7 +115,7 @@ struct EngineOptions {
   static int agg_stats_recalc_cycle;
   static bool force_re_compress;
   static uint32_t metric_schema_cache_capacity;
-  static GenCompAlg compression_algorithm;
+  static CompressAlgo compression_algorithm;
 };
 extern std::atomic<int64_t> kw_used_anon_memory_size;
 

@@ -653,7 +653,6 @@ TEST(Snappy, CompressDecompress) {
   kwdbts::TsBufferBuilder out;
   ASSERT_TRUE(comp.Compress({s.data(), s.size()}, 0, &out));
 
-  // 399
   EXPECT_LT(out.size(), s.size());
 
   kwdbts::TsSliceGuard origin;
@@ -725,6 +724,27 @@ TEST(zlib, CompressDecompress) {
   ASSERT_EQ(origin_size, s.size());
 
   EXPECT_EQ(origin.AsStringView(), s);
+}
+
+TEST(GeneralCompression, EmptyInputIsAValidNoOp) {
+  std::array<const kwdbts::CompressorImpl*, 3> compressors = {
+      &kwdbts::LZ4String::GetInstance(),
+      &kwdbts::ZSTDString::GetInstance(),
+      &kwdbts::ZLIBString::GetInstance(),
+  };
+  const TSSlice empty{nullptr, 0};
+
+  for (const auto* comp : compressors) {
+    kwdbts::TsBufferBuilder compressed;
+    ASSERT_TRUE(comp->Compress(empty, 0, &compressed));
+    EXPECT_EQ(compressed.size(), 0);
+    const TSSlice compressed_slice{compressed.data(), compressed.size()};
+
+    kwdbts::TsSliceGuard raw;
+    ASSERT_TRUE(comp->Decompress(compressed_slice, 0, &raw));
+    EXPECT_EQ(raw.size(), 0);
+    EXPECT_EQ(comp->GetUncompressedSize(compressed_slice, 0), 0u);
+  }
 }
 
 TEST(GeneralCompression, RejectTruncatedHeader) {

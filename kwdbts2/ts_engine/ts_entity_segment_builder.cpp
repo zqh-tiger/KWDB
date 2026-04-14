@@ -285,7 +285,7 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
     auto [first, second] = mgr.GetAlgorithm(d_type, attr_info);
     if (is_var_col) {
       // varchar offset use simple8b algorithm
-      first = TsCompAlg::kSimple8B_V2_u32;
+      first = EncodeAlgo::kSimple8B_V2_u32;
       // var offset data
       TsBufferBuilder compressed;
       TSSlice var_offsets = {block.buffer.data(), n_rows_ * sizeof(uint32_t)};

@@ -773,15 +773,15 @@ void TriggerSettingCallback(const std::string& key, const std::string& value) {
     CLUSTER_SETTING_PARTITION_AGG = "true" == value;
   } else if ("ts.compress.algorithm" == key) {
     if (value == "lz4") {
-      EngineOptions::compression_algorithm = GenCompAlg::kLz4;
+      EngineOptions::compression_algorithm = CompressAlgo::kLz4;
     } else if (value == "zlib") {
-      EngineOptions::compression_algorithm = GenCompAlg::kZlib;
+      EngineOptions::compression_algorithm = CompressAlgo::kZlib;
     } else if (value == "zstd") {
-      EngineOptions::compression_algorithm = GenCompAlg::kZstd;
+      EngineOptions::compression_algorithm = CompressAlgo::kZstd;
     } else if (value == "snappy") {
-      EngineOptions::compression_algorithm = GenCompAlg::kSnappy;
+      EngineOptions::compression_algorithm = CompressAlgo::kSnappy;
     } else if (value == "disabled") {
-      EngineOptions::compression_algorithm = GenCompAlg::kPlain;
+      EngineOptions::compression_algorithm = CompressAlgo::kPlain;
     } else {
       LOG_ERROR("Invalid compression algorithm: %s", value.c_str());
     }

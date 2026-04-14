@@ -89,6 +89,19 @@ bool HasGeneralCompressionHeader(TSSlice data, const char* algorithm_name) {
   return true;
 }
 
+CompressAlgo ResolveDefaultGeneralCompressionAlgorithm(DATATYPE dtype) {
+  switch (dtype) {
+    case DATATYPE::TIMESTAMP64:
+    case DATATYPE::TIMESTAMP64_MICRO:
+    case DATATYPE::TIMESTAMP64_NANO:
+      return CompressAlgo::kPlain;
+    default:
+      break;
+  }
+  return EngineOptions::compress_stage == 2 || EngineOptions::compress_stage == 3 ?
+         EngineOptions::compression_algorithm : CompressAlgo::kPlain;
+}
+
 }  // namespace
 
 // Gorilla compression; a.k.a delta of delta
@@ -988,6 +1001,9 @@ bool LZ4String::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) cons
 }
 
 size_t LZ4String::GetUncompressedSize(TSSlice data, uint64_t count) const {
+  if (data.len == 0) {
+    return 0;
+  }
   if (!HasGeneralCompressionHeader(data, "LZ4 get uncompressed size")) {
     return static_cast<size_t>(-1);
   }
@@ -1039,6 +1055,9 @@ bool ZSTDString::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) con
 }
 
 size_t ZSTDString::GetUncompressedSize(TSSlice data, uint64_t count) const {
+  if (data.len == 0) {
+    return 0;
+  }
   if (!HasGeneralCompressionHeader(data, "ZSTD get uncompressed size")) {
     return static_cast<size_t>(-1);
   }
@@ -1114,6 +1133,9 @@ bool ZLIBString::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) con
 }
 
 size_t ZLIBString::GetUncompressedSize(TSSlice data, uint64_t count) const {
+  if (data.len == 0) {
+    return 0;
+  }
   if (!HasGeneralCompressionHeader(data, "Zlib get uncompressed size")) {
     return static_cast<size_t>(-1);
   }
@@ -1141,7 +1163,7 @@ bool CompressorManager::TwoLevelCompressor::Compress(TSSlice raw, const TsBitmap
     data = buf1.AsSlice();
   }
   if (!ok || data.len > raw.len) {
-    first = TsCompAlg::kPlain;
+    first = EncodeAlgo::kPlain;
     data = raw;
   }
   if (second_ == nullptr) {
@@ -1152,7 +1174,7 @@ bool CompressorManager::TwoLevelCompressor::Compress(TSSlice raw, const TsBitmap
   TsBufferBuilder buf2;
   ok = second_->Compress(data, &buf2, level);
   if (!ok || buf2.size() > data.len) {
-    second = GenCompAlg::kPlain;
+    second = CompressAlgo::kPlain;
   } else {
     data = buf2.AsSlice();
   }
@@ -1191,33 +1213,30 @@ bool CompressorManager::TwoLevelCompressor::Decompress(TSSlice raw, const TsBitm
   return first_->Decompress(data, bitmap, count, out);
 }
 
-std::tuple<TsCompAlg, GenCompAlg> CompressorManager::TwoLevelCompressor::GetAlgorithms() const {
+std::tuple<EncodeAlgo, CompressAlgo> CompressorManager::TwoLevelCompressor::GetAlgorithms() const {
   return {first_algo_, second_algo_};
 }
 
 CompressorManager::CompressorManager() {
-  GenCompAlg second = EngineOptions::compress_stage == 2 || EngineOptions::compress_stage == 3 ?
-  EngineOptions::compression_algorithm : GenCompAlg::kPlain;
-
   // 1. construct default algorithms.
   const std::vector<DATATYPE> timestamp_type{
       DATATYPE::TIMESTAMP64,     DATATYPE::TIMESTAMP64_MICRO,     DATATYPE::TIMESTAMP64_NANO,
       DATATYPE::TIMESTAMP64, DATATYPE::TIMESTAMP64_MICRO, DATATYPE::TIMESTAMP64_NANO};
   for (auto i : timestamp_type) {
-    default_algs_[i] = {TsCompAlg::kSimple8B_V2_s64, GenCompAlg::kPlain};
+    default_algs_[i] = EncodeAlgo::kSimple8B_V2_s64;
   }
 
-  default_algs_[DATATYPE::INT16] = {TsCompAlg::kSimple8B_V2_s16, second};
-  default_algs_[DATATYPE::INT32] = {TsCompAlg::kSimple8B_V2_s32, second};
-  default_algs_[DATATYPE::INT64] = {TsCompAlg::kSimple8B_V2_s64, second};
-  default_algs_[DATATYPE::FLOAT] = {TsCompAlg::kChimp_32, second};
-  default_algs_[DATATYPE::DOUBLE] = {TsCompAlg::kChimp_64, second};
+  default_algs_[DATATYPE::INT16] = EncodeAlgo::kSimple8B_V2_s16;
+  default_algs_[DATATYPE::INT32] = EncodeAlgo::kSimple8B_V2_s32;
+  default_algs_[DATATYPE::INT64] = EncodeAlgo::kSimple8B_V2_s64;
+  default_algs_[DATATYPE::FLOAT] = EncodeAlgo::kChimp_32;
+  default_algs_[DATATYPE::DOUBLE] = EncodeAlgo::kChimp_64;
   // char string
-  default_algs_[DATATYPE::BYTE] = {TsCompAlg::kPlain, second};
-  default_algs_[DATATYPE::CHAR] = {TsCompAlg::kPlain, second};
-  default_algs_[DATATYPE::BINARY] = {TsCompAlg::kPlain, second};
+  default_algs_[DATATYPE::BYTE] = EncodeAlgo::kPlain;
+  default_algs_[DATATYPE::CHAR] = EncodeAlgo::kPlain;
+  default_algs_[DATATYPE::BINARY] = EncodeAlgo::kPlain;
 
-  default_algs_[DATATYPE::BOOL] = {TsCompAlg::kBitPacking, second};
+  default_algs_[DATATYPE::BOOL] = EncodeAlgo::kBitPacking;
 
   /* customized pre-defined levels */
   // lz4: level is ignored when using LZ4_compress_default.
@@ -1229,46 +1248,46 @@ CompressorManager::CompressorManager() {
   // zlib:
   static constexpr int Z_CLEVEL_MEDIUM = 6;
 
-  algs_level_[GenCompAlg::kPlain] = {1, 1, 1, 1};
+  algs_level_[CompressAlgo::kPlain] = {1, 1, 1, 1};
   // algs_level_[GenCompAlg::kLz4] = {LZ4HC_CLEVEL_DEFAULT, LZ4HC_CLEVEL_MIN, LZ4HC_CLEVEL_DEFAULT, LZ4HC_CLEVEL_MAX};
-  algs_level_[GenCompAlg::kLz4] = {1, 1, 1, 1};
-  algs_level_[GenCompAlg::kSnappy] = {1, 1, 1, 1};
-  algs_level_[GenCompAlg::kZstd] = {ZSTD_CLEVEL_MEDIUM, ZSTD_CLEVEL_LOW, ZSTD_CLEVEL_MEDIUM, ZSTD_CLEVEL_HIGH};
-  algs_level_[GenCompAlg::kZlib] = {Z_CLEVEL_MEDIUM, Z_BEST_SPEED, Z_CLEVEL_MEDIUM, Z_BEST_COMPRESSION};
+  algs_level_[CompressAlgo::kLz4] = {1, 1, 1, 1};
+  algs_level_[CompressAlgo::kSnappy] = {1, 1, 1, 1};
+  algs_level_[CompressAlgo::kZstd] = {ZSTD_CLEVEL_MEDIUM, ZSTD_CLEVEL_LOW, ZSTD_CLEVEL_MEDIUM, ZSTD_CLEVEL_HIGH};
+  algs_level_[CompressAlgo::kZlib] = {Z_CLEVEL_MEDIUM, Z_BEST_SPEED, Z_CLEVEL_MEDIUM, Z_BEST_COMPRESSION};
 
   // 2. construct encoding algorithms.
-  ts_comp_[TsCompAlg::kGorilla_32] = &ConcreateTsCompressor<GorillaIntV2<int32_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kGorilla_64] = &ConcreateTsCompressor<GorillaIntV2<int64_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kGorilla_32] = &ConcreateTsCompressor<GorillaIntV2<int32_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kGorilla_64] = &ConcreateTsCompressor<GorillaIntV2<int64_t>>::GetInstance();
 
-  ts_comp_[TsCompAlg::kSimple8B_s8] = &ConcreateTsCompressor<Simple8BInt<int8_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kSimple8B_s16] = &ConcreateTsCompressor<Simple8BInt<int16_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kSimple8B_s32] = &ConcreateTsCompressor<Simple8BInt<int32_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kSimple8B_s64] = &ConcreateTsCompressor<Simple8BInt<int64_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kSimple8B_u8] = &ConcreateTsCompressor<Simple8BInt<uint8_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kSimple8B_u16] = &ConcreateTsCompressor<Simple8BInt<uint16_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kSimple8B_u32] = &ConcreateTsCompressor<Simple8BInt<uint32_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kSimple8B_u64] = &ConcreateTsCompressor<Simple8BInt<uint64_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_s8] = &ConcreateTsCompressor<Simple8BInt<int8_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_s16] = &ConcreateTsCompressor<Simple8BInt<int16_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_s32] = &ConcreateTsCompressor<Simple8BInt<int32_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_s64] = &ConcreateTsCompressor<Simple8BInt<int64_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_u8] = &ConcreateTsCompressor<Simple8BInt<uint8_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_u16] = &ConcreateTsCompressor<Simple8BInt<uint16_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_u32] = &ConcreateTsCompressor<Simple8BInt<uint32_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_u64] = &ConcreateTsCompressor<Simple8BInt<uint64_t>>::GetInstance();
 
-  ts_comp_[TsCompAlg::kSimple8B_V2_s8] = &ConcreateTsCompressor<Simple8BIntV2<int8_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kSimple8B_V2_s16] = &ConcreateTsCompressor<Simple8BIntV2<int16_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kSimple8B_V2_s32] = &ConcreateTsCompressor<Simple8BIntV2<int32_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kSimple8B_V2_s64] = &ConcreateTsCompressor<Simple8BIntV2<int64_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kSimple8B_V2_u8] = &ConcreateTsCompressor<Simple8BIntV2<uint8_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kSimple8B_V2_u16] = &ConcreateTsCompressor<Simple8BIntV2<uint16_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kSimple8B_V2_u32] = &ConcreateTsCompressor<Simple8BIntV2<uint32_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kSimple8B_V2_u64] = &ConcreateTsCompressor<Simple8BIntV2<uint64_t>>::GetInstance();
-  ts_comp_[TsCompAlg::kBitPacking] = &ConcreateTsCompressor<BitPacking>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_V2_s8] = &ConcreateTsCompressor<Simple8BIntV2<int8_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_V2_s16] = &ConcreateTsCompressor<Simple8BIntV2<int16_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_V2_s32] = &ConcreateTsCompressor<Simple8BIntV2<int32_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_V2_s64] = &ConcreateTsCompressor<Simple8BIntV2<int64_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_V2_u8] = &ConcreateTsCompressor<Simple8BIntV2<uint8_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_V2_u16] = &ConcreateTsCompressor<Simple8BIntV2<uint16_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_V2_u32] = &ConcreateTsCompressor<Simple8BIntV2<uint32_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kSimple8B_V2_u64] = &ConcreateTsCompressor<Simple8BIntV2<uint64_t>>::GetInstance();
+  ts_comp_[EncodeAlgo::kBitPacking] = &ConcreateTsCompressor<BitPacking>::GetInstance();
   // Float
-  ts_comp_[TsCompAlg::kChimp_32] = &ConcreateTsCompressor<Chimp<float>>::GetInstance();
-  ts_comp_[TsCompAlg::kChimp_64] = &ConcreateTsCompressor<Chimp<double>>::GetInstance();
+  ts_comp_[EncodeAlgo::kChimp_32] = &ConcreateTsCompressor<Chimp<float>>::GetInstance();
+  ts_comp_[EncodeAlgo::kChimp_64] = &ConcreateTsCompressor<Chimp<double>>::GetInstance();
 
   // construct general compression algorithms
-  general_compressor_[GenCompAlg::kSnappy] = &ConcreateGenCompressor<SnappyString>::GetInstance();
-  general_compressor_[GenCompAlg::kLz4] = &ConcreateGenCompressor<LZ4String>::GetInstance();
-  general_compressor_[GenCompAlg::kZstd] = &ConcreateGenCompressor<ZSTDString>::GetInstance();
-  general_compressor_[GenCompAlg::kZlib] = &ConcreateGenCompressor<ZLIBString>::GetInstance();
+  general_compressor_[CompressAlgo::kSnappy] = &ConcreateGenCompressor<SnappyString>::GetInstance();
+  general_compressor_[CompressAlgo::kLz4] = &ConcreateGenCompressor<LZ4String>::GetInstance();
+  general_compressor_[CompressAlgo::kZstd] = &ConcreateGenCompressor<ZSTDString>::GetInstance();
+  general_compressor_[CompressAlgo::kZlib] = &ConcreateGenCompressor<ZLIBString>::GetInstance();
 }
-auto CompressorManager::GetCompressor(TsCompAlg first, GenCompAlg second) const -> TwoLevelCompressor {
+auto CompressorManager::GetCompressor(EncodeAlgo first, CompressAlgo second) const -> TwoLevelCompressor {
   const TsCompressorBase *first_comp = nullptr;
   const GenCompressorBase *second_comp = nullptr;
   {
@@ -1284,32 +1303,32 @@ auto CompressorManager::GetCompressor(TsCompAlg first, GenCompAlg second) const 
 
 auto CompressorManager::GetAlgorithm(DATATYPE dtype,
                                      const AttributeInfo &attr_info) const
-    -> std::tuple<TsCompAlg, GenCompAlg> {
-  TsCompAlg first = TsCompAlg::kPlain;
-  GenCompAlg second = GenCompAlg::kPlain;
+    -> std::tuple<EncodeAlgo, CompressAlgo> {
+  EncodeAlgo first = EncodeAlgo::kPlain;
+  CompressAlgo second = CompressAlgo::kPlain;
   switch (attr_info.encode_algo) {
   case roachpb::ENCODE_ALGO_UNSPECIFIED: {
     auto it = default_algs_.find(dtype);
     if (it != default_algs_.end()) {
-      first = std::get<0>(it->second);
+      first = it->second;
     } else {
-      first = TsCompAlg::kPlain;
+      first = EncodeAlgo::kPlain;
     }
     break;
   }
   case roachpb::ENCODE_ALGO_SIMPLE8B: {
     switch (dtype) {
     case DATATYPE::INT16:
-      first = TsCompAlg::kSimple8B_V2_s16;
+      first = EncodeAlgo::kSimple8B_V2_s16;
       break;
     case DATATYPE::INT32:
-      first = TsCompAlg::kSimple8B_V2_s32;
+      first = EncodeAlgo::kSimple8B_V2_s32;
       break;
     case DATATYPE::INT64:
     case DATATYPE::TIMESTAMP64:
     case DATATYPE::TIMESTAMP64_MICRO:
     case DATATYPE::TIMESTAMP64_NANO:
-      first = TsCompAlg::kSimple8B_V2_s64;
+      first = EncodeAlgo::kSimple8B_V2_s64;
       break;
     default:
       LOG_ERROR("The data type %d does not match simple8b algorithm.", dtype);
@@ -1318,15 +1337,15 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype,
     break;
   }
   case roachpb::ENCODE_ALGO_BIT_PACKING:
-    first = TsCompAlg::kBitPacking;
+    first = EncodeAlgo::kBitPacking;
     break;
   case roachpb::ENCODE_ALGO_CHIMP:
     switch (dtype) {
     case DATATYPE::FLOAT:
-      first = TsCompAlg::kChimp_32;
+      first = EncodeAlgo::kChimp_32;
       break;
     case DATATYPE::DOUBLE:
-      first = TsCompAlg::kChimp_64;
+      first = EncodeAlgo::kChimp_64;
       break;
     default:
       LOG_ERROR("The data type %d does not match chimp algorithm.", dtype);
@@ -1334,45 +1353,40 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype,
     }
     break;
   default:
-    first = TsCompAlg::kPlain;
+    first = EncodeAlgo::kPlain;
     break;
   }
 
   switch (attr_info.compress_algo) {
   case roachpb::COMPRESS_ALGO_UNSPECIFIED: {
-    auto it = default_algs_.find(dtype);
-    if (it != default_algs_.end()) {
-      second = std::get<1>(it->second);
-    } else {
-      second = GenCompAlg::kPlain;
-    }
+    second = ResolveDefaultGeneralCompressionAlgorithm(dtype);
     break;
   }
   case roachpb::COMPRESS_ALGO_SNAPPY:
-    second = GenCompAlg::kSnappy;
+    second = CompressAlgo::kSnappy;
     break;
   case roachpb::COMPRESS_ALGO_LZ4:
-    second = GenCompAlg::kLz4;
+    second = CompressAlgo::kLz4;
     break;
   case roachpb::COMPRESS_ALGO_ZLIB:
-    second = GenCompAlg::kZlib;
+    second = CompressAlgo::kZlib;
     break;
   case roachpb::COMPRESS_ALGO_ZSTD:
-    second = GenCompAlg::kZstd;
+    second = CompressAlgo::kZstd;
     break;
   default:
-    second = GenCompAlg::kPlain;
+    second = CompressAlgo::kPlain;
     break;
   }
   return {first, second};
 }
 
-auto CompressorManager::GetDefaultAlgorithm(DATATYPE dtype) const -> std::tuple<TsCompAlg, GenCompAlg> {
+auto CompressorManager::GetDefaultAlgorithm(DATATYPE dtype) const -> std::tuple<EncodeAlgo, CompressAlgo> {
   auto it = default_algs_.find(dtype);
   if (it == default_algs_.end()) {
-    return {TsCompAlg::kPlain, GenCompAlg::kPlain};
+    return {EncodeAlgo::kPlain, CompressAlgo::kPlain};
   }
-  return it->second;
+  return {it->second, ResolveDefaultGeneralCompressionAlgorithm(dtype)};
 }
 
 auto CompressorManager::GetDefaultCompressor(DATATYPE dtype) const -> TwoLevelCompressor {
@@ -1381,17 +1395,19 @@ auto CompressorManager::GetDefaultCompressor(DATATYPE dtype) const -> TwoLevelCo
 }
 
 bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, uint64_t count, TsBufferBuilder *output,
-                                     TsCompAlg first, GenCompAlg second, int level) const {
+                                     EncodeAlgo first, CompressAlgo second, int level) const {
   switch (EngineOptions::compress_stage) {
     case 0:
-      first = TsCompAlg::kPlain;
-      second = GenCompAlg::kPlain;
+      first = EncodeAlgo::kPlain;
+      second = CompressAlgo::kPlain;
       break;
     case 1:
-      second = GenCompAlg::kPlain;
+      second = CompressAlgo::kPlain;
       break;
     case 2:
-      first = TsCompAlg::kPlain;
+      first = EncodeAlgo::kPlain;
+      break;
+    default:
       break;
   }
 
@@ -1406,11 +1422,19 @@ bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, 
   return compressor.Compress(input, bitmap, count, output, level_it->second[ResolveCompressionLevel(level)]);
 }
 
-bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, GenCompAlg alg, int level) const {
+bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, CompressAlgo alg, int level) const {
+  switch (EngineOptions::compress_stage) {
+    case 0:
+    case 1:
+      alg = CompressAlgo::kPlain;
+      break;
+    default:
+      break;
+  }
   static_assert(sizeof(alg) == sizeof(uint16_t));
   output->clear();
   PutFixed16(output, static_cast<uint16_t>(alg));
-  if (alg == GenCompAlg::kPlain) {
+  if (alg == CompressAlgo::kPlain) {
     output->append(input.data, input.len);
     return true;
   }
@@ -1426,7 +1450,7 @@ bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, 
   }
   if (tmp.size() >= input.len) {
     output->clear();
-    PutFixed16(output, static_cast<uint16_t>(GenCompAlg::kPlain));
+    PutFixed16(output, static_cast<uint16_t>(CompressAlgo::kPlain));
     output->append(input.data, input.len);
     return true;
   }
@@ -1436,13 +1460,13 @@ bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, 
 
 bool CompressorManager::DoDecompressData(TsSliceGuard &&input, const TsBitmapBase *bitmap, uint64_t count,
                                          TsSliceGuard *out) const {
-  auto algo = input.SubSlice(0, sizeof(TsCompAlg) + sizeof(GenCompAlg));
+  auto algo = input.SubSlice(0, sizeof(EncodeAlgo) + sizeof(CompressAlgo));
   uint16_t v;
   GetFixed16(&algo, &v);
-  TsCompAlg first = static_cast<TsCompAlg>(v);
+  EncodeAlgo first = static_cast<EncodeAlgo>(v);
   GetFixed16(&algo, &v);
-  GenCompAlg second = static_cast<GenCompAlg>(v);
-  if (first >= TsCompAlg::TS_COMP_ALG_LAST || second >= GenCompAlg::GEN_COMP_ALG_LAST) {
+  CompressAlgo second = static_cast<CompressAlgo>(v);
+  if (first >= EncodeAlgo::TS_COMP_ALG_LAST || second >= CompressAlgo::GEN_COMP_ALG_LAST) {
     LOG_ERROR("Invalid algorithm id: first: %d, second: %d", static_cast<int>(first), static_cast<int>(second));
     return false;
   }
@@ -1450,8 +1474,8 @@ bool CompressorManager::DoDecompressData(TsSliceGuard &&input, const TsBitmapBas
   return compressor.Decompress(input.AsSlice(), bitmap, count, out);
 }
 
-bool CompressorManager::DoDecompressVarchar(GenCompAlg alg, TsSliceGuard &&input, TsSliceGuard *out) const {
-  if (alg >= GenCompAlg::GEN_COMP_ALG_LAST) {
+bool CompressorManager::DoDecompressVarchar(CompressAlgo alg, TsSliceGuard &&input, TsSliceGuard *out) const {
+  if (alg >= CompressAlgo::GEN_COMP_ALG_LAST) {
     return false;
   }
   auto it = general_compressor_.find(alg);
