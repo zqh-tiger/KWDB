@@ -38,8 +38,11 @@ class TestTagColumn : public testing::Test {
   }
 
   void SetUp() override {
-    test_path_ = "/tmp/kwdb_mmap_test/tag_col";
-    db_path_ = "/tmp/kwdb_mmap_test/";
+    // Use unique test path for each test to avoid race conditions
+    static std::atomic<uint64_t> test_counter{0};
+    uint64_t unique_id = test_counter.fetch_add(1);
+    test_path_ = "/tmp/kwdb_mmap_test/tag_table_" + std::to_string(unique_id);
+    db_path_ = "/tmp/kwdb_mmap_test/tag_table_" + std::to_string(unique_id) + "/";
     db_name_ = "test_db/";
     mkdir((db_path_ + db_name_).c_str(), 0755);
 
