@@ -111,7 +111,7 @@ KStatus TsTableSchemaManager::alterTableCol(kwdbContext_p ctx, AlterType alter_t
     }
   case ALTER_COLUMN_COMPRESS_INFO: {
     if (col_idx < 0) {
-      LOG_ERROR("alter column type failed: table id %lu, column (id %u) does not exists", table_id_, attr_info.id);
+      LOG_ERROR("alter column compress failed: table id %lu, column (id %u) does not exists", table_id_, attr_info.id);
       msg = "column does not exist";
       return FAIL;
     }

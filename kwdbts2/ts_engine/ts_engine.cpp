@@ -47,7 +47,8 @@ int64_t EngineOptions::default_partition_interval = 3600 * 24 * 10;
 // default block cache max size is set to 1G
 int64_t EngineOptions::block_cache_max_size = 1024 * 1024 * 1024;
 uint8_t EngineOptions::compress_stage = 3;
-CompressLevel EngineOptions::compress_level = CompressLevel::LOW;
+CompressLevel EngineOptions::compress_level = CompressLevel::MEDIUM;
+CompressAlgo EngineOptions::compression_algorithm = CompressAlgo::kLz4;
 bool EngineOptions::compress_last_segment = true;
 #ifdef KWBASE_OSS
 bool EngineOptions::force_sync_file = false;
@@ -59,7 +60,6 @@ double EngineOptions::block_filter_sampling_ratio = 0.2;
 int EngineOptions::agg_stats_recalc_cycle = 60 * 30;
 uint32_t EngineOptions::metric_schema_cache_capacity = 100;
 bool EngineOptions::force_re_compress = false;
-GenCompAlg EngineOptions::compression_algorithm = GenCompAlg::kSnappy;
 
 extern std::map<std::string, std::string> g_cluster_settings;
 extern std::shared_mutex g_settings_mutex;
