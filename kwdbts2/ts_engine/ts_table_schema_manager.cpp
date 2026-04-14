@@ -123,8 +123,8 @@ KStatus TsTableSchemaManager::alterTableCol(kwdbContext_p ctx, AlterType alter_t
     col_info.size = attr_info.size;
     col_info.length = attr_info.length;
     col_info.max_len = attr_info.max_len;
-    col_info.encode_type = attr_info.encode_type;
-    col_info.compress_type = attr_info.compress_type;
+    col_info.encode_algo = attr_info.encode_algo;
+    col_info.compress_algo = attr_info.compress_algo;
     col_info.compress_level = attr_info.compress_level;
     break;
   }
@@ -673,11 +673,11 @@ KStatus TsTableSchemaManager::parseAttrInfo(const roachpb::KWDBKTSColumn& col, A
   }
   attr_info.col_flag = static_cast<ColumnFlag>(col.col_type());
   attr_info.version = 1;
-  if (col.has_encode_type()) {
-    attr_info.encode_type = col.encode_type();
+  if (col.has_encode_algo()) {
+    attr_info.encode_algo = col.encode_algo();
   }
-  if (col.has_compress_type()) {
-    attr_info.compress_type = col.compress_type();
+  if (col.has_compress_algo()) {
+    attr_info.compress_algo = col.compress_algo();
   }
   if (col.has_compress_level()) {
     attr_info.compress_level = col.compress_level();

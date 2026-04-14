@@ -224,7 +224,7 @@ TYPED_TEST(CompressorManagerTester, Null_Compressions) {
 TEST(CompressorManager, ChimpAlgorithmMatchesFloatingType) {
   const auto& inst = kwdbts::CompressorManager::GetInstance();
   AttributeInfo attr_info{};
-  attr_info.encode_type = roachpb::KW_COL_ENCODE_TYPE_CHIMP;
+  attr_info.encode_algo = roachpb::ENCODE_ALGO_CHIMP;
 
   auto [float_alg, float_general_alg] = inst.GetAlgorithm(DATATYPE::FLOAT, attr_info);
   auto [double_alg, double_general_alg] = inst.GetAlgorithm(DATATYPE::DOUBLE, attr_info);
@@ -257,6 +257,52 @@ TEST(CompressorManager, InvalidCompressionLevelFallsBackToDefault) {
   kwdbts::TsSliceGuard varchar_raw;
   ASSERT_TRUE(inst.DecompressVarchar(varchar_compressed.GetBuffer(), &varchar_raw));
   EXPECT_EQ(varchar_raw.AsStringView(), varchar);
+}
+
+TEST(CompressorManager, UnspecifiedCompressionLevelUsesClusterSetting) {
+  const auto& inst = kwdbts::CompressorManager::GetInstance();
+  const auto old_level = kwdbts::EngineOptions::compress_level;
+
+  std::vector<int32_t> vec(4096);
+  std::iota(vec.begin(), vec.end(), 0);
+  std::string varchar(4096, 'x');
+
+  struct TestCase {
+    kwdbts::CompressLevel cluster_level;
+    int explicit_level;
+  };
+
+  const std::vector<TestCase> cases = {
+      {kwdbts::CompressLevel::LOW, roachpb::COMPRESS_LEVEL_LOW},
+      {kwdbts::CompressLevel::MEDIUM, roachpb::COMPRESS_LEVEL_MEDIUM},
+      {kwdbts::CompressLevel::HIGH, roachpb::COMPRESS_LEVEL_HIGH},
+  };
+
+  for (const auto& tc : cases) {
+    kwdbts::EngineOptions::compress_level = tc.cluster_level;
+
+    kwdbts::TsBufferBuilder expected_numeric;
+    kwdbts::TsBufferBuilder actual_numeric;
+    ASSERT_TRUE(inst.CompressData({reinterpret_cast<char*>(vec.data()), vec.size() * sizeof(int32_t)}, nullptr,
+                                  vec.size(), &expected_numeric, kwdbts::TsCompAlg::kSimple8B_V2_s32,
+                                  kwdbts::GenCompAlg::kZstd, tc.explicit_level));
+    ASSERT_TRUE(inst.CompressData({reinterpret_cast<char*>(vec.data()), vec.size() * sizeof(int32_t)}, nullptr,
+                                  vec.size(), &actual_numeric, kwdbts::TsCompAlg::kSimple8B_V2_s32,
+                                  kwdbts::GenCompAlg::kZstd, roachpb::COMPRESS_LEVEL_UNSPECIFIED));
+    ASSERT_EQ(expected_numeric.size(), actual_numeric.size());
+    EXPECT_EQ(std::memcmp(expected_numeric.data(), actual_numeric.data(), expected_numeric.size()), 0);
+
+    kwdbts::TsBufferBuilder expected_varchar;
+    kwdbts::TsBufferBuilder actual_varchar;
+    ASSERT_TRUE(inst.CompressVarchar({varchar.data(), varchar.size()}, &expected_varchar, kwdbts::GenCompAlg::kZstd,
+                                     tc.explicit_level));
+    ASSERT_TRUE(inst.CompressVarchar({varchar.data(), varchar.size()}, &actual_varchar, kwdbts::GenCompAlg::kZstd,
+                                     roachpb::COMPRESS_LEVEL_UNSPECIFIED));
+    ASSERT_EQ(expected_varchar.size(), actual_varchar.size());
+    EXPECT_EQ(std::memcmp(expected_varchar.data(), actual_varchar.data(), expected_varchar.size()), 0);
+  }
+
+  kwdbts::EngineOptions::compress_level = old_level;
 }
 
 TEST(CompressorManager, VarcharCompressionFallsBackToPlainWhenPayloadGrows) {

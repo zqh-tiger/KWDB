@@ -283,40 +283,40 @@ func makeKObjectTableForTs(d jobspb.SyncMetaCacheDetails) sqlbase.CreateTsTable 
 }
 
 func makeCompressInfo(kColDesc *sqlbase.KWDBKTSColumn, col sqlbase.ColumnDescriptor) {
-	if col.TsCol.EncodeType != nil {
-		switch *col.TsCol.EncodeType {
+	if col.TsCol.EncodeAlgo != nil {
+		switch *col.TsCol.EncodeAlgo {
 		case "simple8b":
-			kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_SIMPLE8B
+			kColDesc.EncodeAlgo = sqlbase.ColumnEncodeAlgo_ENCODE_ALGO_SIMPLE8B
 		case "chimp":
-			kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_CHIMP
+			kColDesc.EncodeAlgo = sqlbase.ColumnEncodeAlgo_ENCODE_ALGO_CHIMP
 		case "bit-packing":
-			kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_BIT_PACKING
+			kColDesc.EncodeAlgo = sqlbase.ColumnEncodeAlgo_ENCODE_ALGO_BIT_PACKING
 		case "disabled":
-			kColDesc.EncodeType = sqlbase.ColumnEncodeType_KW_COL_ENCODE_TYPE_DISABLED
+			kColDesc.EncodeAlgo = sqlbase.ColumnEncodeAlgo_ENCODE_ALGO_DISABLED
 		}
 	}
-	if col.TsCol.CompressType != nil {
-		switch *col.TsCol.CompressType {
+	if col.TsCol.CompressAlgo != nil {
+		switch *col.TsCol.CompressAlgo {
 		case "lz4":
-			kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_LZ4
+			kColDesc.CompressAlgo = sqlbase.ColumnCompressAlgo_COMPRESS_ALGO_LZ4
 		case "zlib":
-			kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_ZLIB
+			kColDesc.CompressAlgo = sqlbase.ColumnCompressAlgo_COMPRESS_ALGO_ZLIB
 		case "snappy":
-			kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_SNAPPY
+			kColDesc.CompressAlgo = sqlbase.ColumnCompressAlgo_COMPRESS_ALGO_SNAPPY
 		case "zstd":
-			kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_ZSTD
+			kColDesc.CompressAlgo = sqlbase.ColumnCompressAlgo_COMPRESS_ALGO_ZSTD
 		case "disabled":
-			kColDesc.CompressType = sqlbase.ColumnCompressType_KW_COL_COMPRESS_TYPE_DISABLED
+			kColDesc.CompressAlgo = sqlbase.ColumnCompressAlgo_COMPRESS_ALGO_DISABLED
 		}
 	}
 	if col.TsCol.CompressLevel != nil {
 		switch *col.TsCol.CompressLevel {
 		case "low", "l":
-			kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_KW_COL_COMPRESS_LEVEL_LOW
+			kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_COMPRESS_LEVEL_LOW
 		case "medium", "m":
-			kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_KW_COL_COMPRESS_LEVEL_MEDIUM
+			kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_COMPRESS_LEVEL_MEDIUM
 		case "high", "h":
-			kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_KW_COL_COMPRESS_LEVEL_HIGH
+			kColDesc.CompressLevel = sqlbase.ColumnCompressLevel_COMPRESS_LEVEL_HIGH
 		}
 	}
 }

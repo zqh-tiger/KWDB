@@ -1310,7 +1310,7 @@ func (u *sqlSymUnion) triggerBody() tree.TriggerBody {
 %type <tree.CompositeKeyMatchMethod> key_match
 %type <tree.ReferenceActions> reference_actions
 %type <tree.ReferenceAction> reference_action reference_on_delete reference_on_update
-%type <*string> opt_compress_level opt_compress_type opt_encode_type
+%type <*string> opt_compress_level opt_compress_algo opt_encode_algo
 
 %type <tree.Expr> func_application func_expr_common_subexpr special_function
 %type <tree.Expr> func_expr func_expr_windowless
@@ -2014,18 +2014,18 @@ alter_table_cmd:
   //     [SET DATA] TYPE <typename>
   //     [ COLLATE collation ]
   //     [ USING <expression> ]
-  //		 [ ENCODE <encode_type> ]
-  //	   [ COMPRESS <compress_type> ]
+  //		 [ ENCODE <encode_algo> ]
+  //	   [ COMPRESS <compress_algo> ]
   //     [ LEVEL <compress_level> ]
-| ALTER opt_column column_name opt_set_data opt_alter_type opt_collate opt_alter_column_using opt_encode_type opt_compress_type opt_compress_level
+| ALTER opt_column column_name opt_set_data opt_alter_type opt_collate opt_alter_column_using opt_encode_algo opt_compress_algo opt_compress_level
   {
     $$.val = &tree.AlterTableAlterColumnType{
       Column: tree.Name($3),
       ToType: $5.colType(),
       Collation: $6,
       Using: $7.expr(),
-			EncodeType:		 $8.strPtr(),
-			CompressType:  $9.strPtr(),
+			EncodeAlgo:		 $8.strPtr(),
+			CompressAlgo:  $9.strPtr(),
 			CompressLevel: $10.strPtr(),
     }
   }
@@ -2133,19 +2133,19 @@ alter_table_cmd:
   	}
   }
 
-opt_encode_type:
+opt_encode_algo:
 	ENCODE non_reserved_word_or_sconst
 	{
-		encodeType := $2
-		$$.val = &encodeType
+		EncodeAlgo := $2
+		$$.val = &EncodeAlgo
 	}
 | /* EMPTY */ { $$.val = (*string)(nil) }
 
-opt_compress_type:
+opt_compress_algo:
 	COMPRESS non_reserved_word_or_sconst
 	{
-		compressType := $2
-		$$.val = &compressType
+		CompressAlgo := $2
+		$$.val = &CompressAlgo
 	}
 | /* EMPTY */ { $$.val = (*string)(nil) }
 
@@ -6248,11 +6248,11 @@ col_qualification:
 	}
 | ENCODE non_reserved_word_or_sconst
 	{
-    $$.val = tree.NamedColumnQualification{Qualification: &tree.ColumnEncode{EncodeType: $2}}
+    $$.val = tree.NamedColumnQualification{Qualification: &tree.ColumnEncode{EncodeAlgo: $2}}
 	}
 | COMPRESS non_reserved_word_or_sconst opt_compress_level
 	{
-		$$.val = tree.NamedColumnQualification{Qualification: &tree.ColumnCompress{CompressType: $2, CompressLevel: $3.strPtr()}}
+		$$.val = tree.NamedColumnQualification{Qualification: &tree.ColumnCompress{CompressAlgo: $2, CompressLevel: $3.strPtr()}}
 	}
 
 opt_compress_level:

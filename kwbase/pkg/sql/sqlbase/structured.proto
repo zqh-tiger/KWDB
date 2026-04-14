@@ -156,8 +156,8 @@ message TSCol {
   optional VariableLengthType variable_length_type = 5 [(gogoproto.nullable) = false];
   optional ColumnType column_type = 6 [(gogoproto.nullable) = false];
   optional bool nullable = 7 [(gogoproto.nullable) = false];
-  optional string encode_type = 8;
-  optional string compress_type = 9;
+  optional string encode_algo = 8;
+  optional string compress_algo = 9;
   optional string compress_level = 10;
 }
 

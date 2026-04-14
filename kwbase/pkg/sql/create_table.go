@@ -1723,10 +1723,10 @@ func checkColumnDef(
 	columnDefaultExprs *[]tree.TypedExpr,
 ) error {
 	if !desc.IsTSTable() {
-		if d.ColumnEncode.EncodeType != nil {
+		if d.ColumnEncode.EncodeAlgo != nil {
 			return pgerror.Newf(pgcode.FeatureNotSupported, "ENCODE only supported on ts table")
 		}
-		if d.ColumnCompress.CompressType != nil {
+		if d.ColumnCompress.CompressAlgo != nil {
 			return pgerror.Newf(pgcode.FeatureNotSupported, "COMPRESS only supported on ts table")
 		}
 	}
@@ -1823,8 +1823,8 @@ func checkAndMakeTSColDesc(
 	}
 	nullable := d.Nullable.Nullability != tree.NotNull
 	compressInfo := sqlbase.CompressInfo{
-		EncodeType:    d.ColumnEncode.EncodeType,
-		CompressType:  d.ColumnCompress.CompressType,
+		EncodeAlgo:    d.ColumnEncode.EncodeAlgo,
+		CompressAlgo:  d.ColumnCompress.CompressAlgo,
 		CompressLevel: d.ColumnCompress.CompressLevel,
 	}
 	*col, expr, err = sqlbase.MakeTSColumnDefDescs(string(d.Name), d.Type, nullable, desc.TsTable.Sde, sqlbase.ColumnType_TYPE_DATA, d.DefaultExpr.Expr, semaCtx, compressInfo)

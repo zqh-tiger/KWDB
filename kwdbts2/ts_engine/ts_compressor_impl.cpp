@@ -45,6 +45,9 @@ namespace {
 
 constexpr size_t kGeneralCompressionHeaderSize = sizeof(uint64_t);
 constexpr int kDefaultCompressionLevelIndex = 0;
+constexpr int kLowCompressionLevelIndex = 1;
+constexpr int kMediumCompressionLevelIndex = 2;
+constexpr int kHighCompressionLevelIndex = 3;
 
 int NormalizeCompressionLevel(int level) {
   if (level < 0 || level >= 4) {
@@ -52,6 +55,30 @@ int NormalizeCompressionLevel(int level) {
     return kDefaultCompressionLevelIndex;
   }
   return level;
+}
+
+int ResolveCompressionLevel(int level) {
+  switch (level) {
+    case roachpb::COMPRESS_LEVEL_UNSPECIFIED:
+      switch (EngineOptions::compress_level) {
+        case CompressLevel::LOW:
+          return kLowCompressionLevelIndex;
+        case CompressLevel::MEDIUM:
+          return kMediumCompressionLevelIndex;
+        case CompressLevel::HIGH:
+          return kHighCompressionLevelIndex;
+        default:
+          LOG_ERROR("Invalid cluster compress level: %d, fallback to default level.",
+                    static_cast<int>(EngineOptions::compress_level));
+          return kDefaultCompressionLevelIndex;
+      }
+    case roachpb::COMPRESS_LEVEL_LOW:
+    case roachpb::COMPRESS_LEVEL_MEDIUM:
+    case roachpb::COMPRESS_LEVEL_HIGH:
+      return level;
+    default:
+      return NormalizeCompressionLevel(level);
+  }
 }
 
 bool HasGeneralCompressionHeader(TSSlice data, const char* algorithm_name) {
@@ -1260,8 +1287,8 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype,
     -> std::tuple<TsCompAlg, GenCompAlg> {
   TsCompAlg first = TsCompAlg::kPlain;
   GenCompAlg second = GenCompAlg::kPlain;
-  switch (attr_info.encode_type) {
-  case roachpb::KW_COL_ENCODE_TYPE_UNSPECIFIED: {
+  switch (attr_info.encode_algo) {
+  case roachpb::ENCODE_ALGO_UNSPECIFIED: {
     auto it = default_algs_.find(dtype);
     if (it != default_algs_.end()) {
       first = std::get<0>(it->second);
@@ -1270,7 +1297,7 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype,
     }
     break;
   }
-  case roachpb::KW_COL_ENCODE_TYPE_SIMPLE8B: {
+  case roachpb::ENCODE_ALGO_SIMPLE8B: {
     switch (dtype) {
     case DATATYPE::INT16:
       first = TsCompAlg::kSimple8B_V2_s16;
@@ -1290,10 +1317,10 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype,
     }
     break;
   }
-  case roachpb::KW_COL_ENCODE_TYPE_BIT_PACKING:
+  case roachpb::ENCODE_ALGO_BIT_PACKING:
     first = TsCompAlg::kBitPacking;
     break;
-  case roachpb::KW_COL_ENCODE_TYPE_CHIMP:
+  case roachpb::ENCODE_ALGO_CHIMP:
     switch (dtype) {
     case DATATYPE::FLOAT:
       first = TsCompAlg::kChimp_32;
@@ -1311,8 +1338,8 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype,
     break;
   }
 
-  switch (attr_info.compress_type) {
-  case roachpb::KW_COL_COMPRESS_TYPE_UNSPECIFIED: {
+  switch (attr_info.compress_algo) {
+  case roachpb::COMPRESS_ALGO_UNSPECIFIED: {
     auto it = default_algs_.find(dtype);
     if (it != default_algs_.end()) {
       second = std::get<1>(it->second);
@@ -1321,16 +1348,16 @@ auto CompressorManager::GetAlgorithm(DATATYPE dtype,
     }
     break;
   }
-  case roachpb::KW_COL_COMPRESS_TYPE_SNAPPY:
+  case roachpb::COMPRESS_ALGO_SNAPPY:
     second = GenCompAlg::kSnappy;
     break;
-  case roachpb::KW_COL_COMPRESS_TYPE_LZ4:
+  case roachpb::COMPRESS_ALGO_LZ4:
     second = GenCompAlg::kLz4;
     break;
-  case roachpb::KW_COL_COMPRESS_TYPE_ZLIB:
+  case roachpb::COMPRESS_ALGO_ZLIB:
     second = GenCompAlg::kZlib;
     break;
-  case roachpb::KW_COL_COMPRESS_TYPE_ZSTD:
+  case roachpb::COMPRESS_ALGO_ZSTD:
     second = GenCompAlg::kZstd;
     break;
   default:
@@ -1376,7 +1403,7 @@ bool CompressorManager::CompressData(TSSlice input, const TsBitmapBase *bitmap, 
     return false;
   }
   auto compressor = GetCompressor(first, second);
-  return compressor.Compress(input, bitmap, count, output, level_it->second[NormalizeCompressionLevel(level)]);
+  return compressor.Compress(input, bitmap, count, output, level_it->second[ResolveCompressionLevel(level)]);
 }
 
 bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, GenCompAlg alg, int level) const {
@@ -1393,7 +1420,7 @@ bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, 
     return false;
   }
   TsBufferBuilder tmp;
-  bool ok = it->second->Compress(input, &tmp, algs_level_.at(alg)[NormalizeCompressionLevel(level)]);
+  bool ok = it->second->Compress(input, &tmp, algs_level_.at(alg)[ResolveCompressionLevel(level)]);
   if (!ok) {
     return false;
   }

@@ -231,8 +231,8 @@ type AlterTableAlterColumnType struct {
 	Column        Name
 	ToType        *types.T
 	Using         Expr
-	EncodeType    *string
-	CompressType  *string
+	EncodeAlgo    *string
+	CompressAlgo  *string
 	CompressLevel *string
 }
 
@@ -258,13 +258,13 @@ func (node *AlterTableAlterColumnType) Format(ctx *FmtCtx) {
 			ctx.FormatNode(node.Using)
 		}
 	}
-	if node.EncodeType != nil {
+	if node.EncodeAlgo != nil {
 		ctx.WriteString(" ENCODE ")
-		ctx.WriteString(*node.EncodeType)
+		ctx.WriteString(*node.EncodeAlgo)
 	}
-	if node.CompressType != nil {
+	if node.CompressAlgo != nil {
 		ctx.WriteString(" COMPRESS ")
-		ctx.WriteString(*node.CompressType)
+		ctx.WriteString(*node.CompressAlgo)
 	}
 	if node.CompressLevel != nil {
 		ctx.WriteString(" LEVEL ")
