@@ -10,20 +10,14 @@
 // See the Mulan PSL v2 for more details.
 
 #include "ts_entity_segment_builder.h"
+
 #include <sys/types.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
-#if defined(__GNUC__) && (__GNUC__ < 8)
-  #include <experimental/filesystem>
-  namespace fs = std::experimental::filesystem;
-#else
-  #include <filesystem>
-  namespace fs = std::filesystem;
-#endif
 #include <utility>
-
 
 #include "data_type.h"
 #include "kwdb_type.h"
@@ -39,7 +33,6 @@
 #include "ts_entity_segment_handle.h"
 #include "ts_filename.h"
 #include "ts_io.h"
-#include "ts_lastsegment_builder.h"
 #include "ts_sliceguard.h"
 #include "ts_version.h"
 
@@ -358,8 +351,12 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
       AggCalculatorV2 aggCalc(block.buffer.data(), bitmap, DATATYPE(metric_schema_[col_idx - 1].type),
                               metric_schema_[col_idx - 1].size, n_rows_);
       auto is_not_null = metric_schema_[col_idx - 1].isFlag(AINFO_NOT_NULL);
-      *reinterpret_cast<bool *>(sum.data()) =  aggCalc.CalcAggForFlush(is_not_null, count, max.data(),
-                                                                       min.data(), sum.data() + 1);
+      bool is_overflow = false;
+      KStatus s = aggCalc.CalcAggForFlush(is_not_null, is_overflow, count, max.data(), min.data(), sum.data() + 1);
+      if (s != KStatus::SUCCESS) {
+        return s;
+      }
+      *reinterpret_cast<bool *>(sum.data()) = is_overflow;
       if (0 == count) {
         continue;
       }
@@ -628,18 +625,18 @@ KStatus TsEntitySegmentBuilder::Compact(bool call_by_vacuum, TsVersionUpdate* up
     }
     TsEntityKey cur_entity_key = {block_span->GetTableID(), block_span->GetTableVersion(), block_span->GetEntityID()};
     if (entity_key == TsEntityKey{}) {
-      entity_key = cur_entity_key;
-      stats->written_devices++;
       std::shared_ptr<TsTableSchemaManager> tbl_schema_mgr = nullptr;
       bool is_dropped = false;
-      s = schema_manager_->GetTableSchemaMgr(entity_key.table_id, tbl_schema_mgr, &is_dropped);
+      s = schema_manager_->GetTableSchemaMgr(cur_entity_key.table_id, tbl_schema_mgr, &is_dropped);
       if (s == FAIL) {
         if (is_dropped) {
-          LOG_INFO("table %lu was dropped, ignore it.", entity_key.table_id);
+          LOG_INFO("table %lu was dropped, ignore it.", cur_entity_key.table_id);
           continue;
         }
         return s;
       }
+      entity_key = cur_entity_key;
+      stats->written_devices++;
       std::shared_ptr<MMapMetricsTable> table_schema;
       s = tbl_schema_mgr->GetMetricSchema(entity_key.table_version, &table_schema);
       if (s != KStatus::SUCCESS) {
