@@ -70,12 +70,12 @@ class CompressorManager {
     std::tuple<EncodeAlgo, CompressAlgo> GetAlgorithms() const;
   };
 
-  std::unordered_map<EncodeAlgo, TsCompressorBase*> ts_comp_;
-  std::unordered_map<CompressAlgo, GenCompressorBase*> general_compressor_;
-  // default_algs_ stores the type-based default encoding algorithm. The default general compression algorithm for
+  std::unordered_map<EncodeAlgo, TsCompressorBase*> ts_encoders_;
+  std::unordered_map<CompressAlgo, GenCompressorBase*> ts_compressors_;
+  // default_encode_algs_ stores the type-based default encoding algorithm. The default general compression algorithm for
   // COMPRESS_ALGO_UNSPECIFIED is resolved dynamically from the current EngineOptions when needed.
-  std::unordered_map<DATATYPE, EncodeAlgo> default_algs_;
-  std::unordered_map<CompressAlgo, std::array<int, 4>> algs_level_;
+  std::unordered_map<DATATYPE, EncodeAlgo> default_encode_algs_;
+  std::unordered_map<CompressAlgo, std::array<int, 4>> compress_levels_;
 
   CompressorManager();
 
@@ -97,7 +97,7 @@ class CompressorManager {
   TwoLevelCompressor GetDefaultCompressor(DATATYPE dtype) const;
 
   bool CompressData(TSSlice input, const TsBitmapBase* bitmap, uint64_t count, TsBufferBuilder* output,
-                    EncodeAlgo first, CompressAlgo second, int level) const;
+                    EncodeAlgo encode_algo, CompressAlgo compress_algo, int level) const;
   bool CompressVarchar(TSSlice input, TsBufferBuilder* output, CompressAlgo alg, int level) const;
   bool DecompressData(TsSliceGuard&& input, const TsBitmapBase* bitmap, uint64_t count, TsSliceGuard* out) const {
     if (input.size() < 4) {
