@@ -282,15 +282,15 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
     } else {
       attr_info = metric_schema_[col_idx - 1];
     }
-    auto [first, second] = mgr.GetAlgorithm(d_type, attr_info);
+    auto [encode_algo, compress_algo] = mgr.GetAlgorithm(d_type, attr_info);
     if (is_var_col) {
       // varchar offset use simple8b algorithm
-      first = EncodeAlgo::kSimple8B_V2_u32;
+      encode_algo = EncodeAlgo::kSimple8B_V2_u32;
       // var offset data
       TsBufferBuilder compressed;
       TSSlice var_offsets = {block.buffer.data(), n_rows_ * sizeof(uint32_t)};
       bool ok = mgr.CompressData(var_offsets, nullptr, n_rows_, &compressed,
-        first, second, attr_info.compress_level);
+        encode_algo, compress_algo, attr_info.compress_level);
       if (!ok) {
         LOG_ERROR("Compress var offset data failed, tb_id [%u], tb_version [%u], entity_id [%lu], col_idx [%d]",
           table_id_, table_version_, entity_id_, col_idx);
@@ -303,7 +303,7 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
       compressed.clear();
       uint32_t var_data_offset = EngineOptions::max_rows_per_block * sizeof(uint32_t);
       ok = mgr.CompressVarchar({block.buffer.data() + var_data_offset, block.buffer.size() - var_data_offset},
-                        &compressed, second, metric_schema_[col_idx - 1].compress_level);
+                        &compressed, compress_algo, metric_schema_[col_idx - 1].compress_level);
       if (!ok) {
         LOG_ERROR("Compress var data failed, tb_id [%u], tb_version [%u], entity_id [%lu], col_idx [%d]",
           table_id_, table_version_, entity_id_, col_idx);
@@ -313,7 +313,7 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
     } else {
       TsBufferBuilder compressed;
       TSSlice plain{block.buffer.data(), block.buffer.size()};
-      mgr.CompressData(plain, b, n_rows_, &compressed, first, second, attr_info.compress_level);
+      mgr.CompressData(plain, b, n_rows_, &compressed, encode_algo, compress_algo, attr_info.compress_level);
       data_buffer->append(compressed);
     }
     // col offset
