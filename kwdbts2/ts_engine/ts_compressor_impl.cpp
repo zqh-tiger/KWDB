@@ -1026,21 +1026,23 @@ bool ZSTDString::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, in
     out->append(data);
     return true;
   }
-  size_t dst_capacity  = ZSTD_compressBound(data.len);
-  std::vector<char> compressed(dst_capacity);
-  if (dst_capacity != 0) {
-    size_t compressed_size = ZSTD_compress(compressed.data(), dst_capacity, data.data, data.len, level);
-    if (ZSTD_isError(compressed_size)) {
-      LOG_ERROR("ZSTD Compress Failed!");
-      // out->append(data);
-      return false;
-    }
-    PutFixed64(out, data.len);
-    out->append(compressed.data(), compressed_size);
-    return true;
+  const size_t dst_capacity = ZSTD_compressBound(data.len);
+  if (dst_capacity == 0) {
+    LOG_ERROR("ZSTD Compress Failed! Input size is incorrect (too large or negative).");
+    return false;
   }
-  LOG_ERROR("ZSTD Compress Failed! Input size is incorrect (too large or negative).");
-  return false;
+  out->reserve(kGeneralCompressionHeaderSize + dst_capacity);
+  PutFixed64(out, data.len);
+  const size_t compressed_offset = out->size();
+  out->resize(compressed_offset + dst_capacity);
+  size_t compressed_size = ZSTD_compress(out->data() + compressed_offset, dst_capacity, data.data, data.len, level);
+  if (ZSTD_isError(compressed_size)) {
+    LOG_ERROR("ZSTD Compress Failed!");
+    out->clear();
+    return false;
+  }
+  out->resize(compressed_offset + compressed_size);
+  return true;
 }
 
 bool ZSTDString::Decompress(TSSlice data, uint64_t count, TsSliceGuard *out) const {
@@ -1080,30 +1082,45 @@ bool ZLIBString::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, in
     out->append(data);
     return true;
   }
+  if (data.len > static_cast<size_t>(std::numeric_limits<uInt>::max())) {
+    LOG_ERROR("Zlib Compress Failed! Input size %lu exceeds supported range.", data.len);
+    return false;
+  }
   z_stream zs = {};
   if (deflateInit(&zs, level) != Z_OK) {
     LOG_ERROR("Zlib deflateInit failed!");
     return false;
   }
 
-  zs.next_in = reinterpret_cast<Bytef*>(data.data);
-  zs.avail_in = data.len;
+  const uInt input_size = static_cast<uInt>(data.len);
+  const uLong dst_capacity = deflateBound(&zs, input_size);
+  if (dst_capacity == 0 || dst_capacity > static_cast<uLong>(std::numeric_limits<uInt>::max())) {
+    LOG_ERROR("Zlib deflateBound failed for input size %u.", input_size);
+    deflateEnd(&zs);
+    return false;
+  }
 
-  std::vector<Bytef> out_buffer(deflateBound(&zs, data.len));
-  zs.next_out = out_buffer.data();
-  zs.avail_out = out_buffer.size();
+  out->reserve(kGeneralCompressionHeaderSize + static_cast<size_t>(dst_capacity));
+  PutFixed64(out, data.len);
+  const size_t compressed_offset = out->size();
+  out->resize(compressed_offset + static_cast<size_t>(dst_capacity));
+
+  zs.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(data.data));
+  zs.avail_in = input_size;
+  zs.next_out = reinterpret_cast<Bytef*>(out->data() + compressed_offset);
+  zs.avail_out = static_cast<uInt>(dst_capacity);
 
   int ret = deflate(&zs, Z_FINISH);
   if (ret != Z_STREAM_END) {
     LOG_ERROR("Zlib deflate failed during compression! Error code:%d", ret);
     deflateEnd(&zs);
+    out->clear();
     return false;
   }
 
   size_t compressed_size = zs.total_out;
   deflateEnd(&zs);
-  PutFixed64(out, data.len);
-  out->append(reinterpret_cast<const char*>(out_buffer.data()), compressed_size);
+  out->resize(compressed_offset + compressed_size);
   return true;
 }
 
