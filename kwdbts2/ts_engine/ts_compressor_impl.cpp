@@ -1163,6 +1163,7 @@ size_t ZLIBString::GetUncompressedSize(TSSlice data, uint64_t count) const {
 }
 
 thread_local TsBufferBuilder tl_first_out;
+thread_local TsBufferBuilder tl_second_out;
 
 bool CompressorManager::TwoLevelCompressor::Compress(TSSlice raw, const TsBitmapBase *bitmap, uint32_t count,
                                                      TsBufferBuilder *out, int level) const {
@@ -1191,12 +1192,12 @@ bool CompressorManager::TwoLevelCompressor::Compress(TSSlice raw, const TsBitmap
     out->append(data);
     return true;
   }
-  tl_first_out.clear();
-  ok = second_->Compress(data, &tl_first_out, level);
-  if (!ok || tl_first_out.size() > data.len) {
+  tl_second_out.clear();
+  ok = second_->Compress(data, &tl_second_out, level);
+  if (!ok || tl_second_out.size() > data.len) {
     second = CompressAlgo::kPlain;
   } else {
-    data = tl_first_out.AsSlice();
+    data = tl_second_out.AsSlice();
   }
   EncodeAlgorithm(out, first, second);
   out->append(data);
