@@ -194,11 +194,13 @@ class TsAggIteratorImpl : public TsStorageIteratorImpl {
   bool IsDisordered() override;
   void SwitchEntity() override;
   void Reset();
+  void TimeBucketReset();
   void AddAggResult(ResultSet* res);
   std::vector<shared_ptr<TsBlockSpan>> SortBlockSpans(std::list<std::shared_ptr<TsBlockSpan>>& ts_block_spans);
 
  protected:
   KStatus GenerateAggData();
+  KStatus GenerateTimeBucketAggData();
   KStatus GetBlockSpans(TsScanStats* ts_scan_stats);
   KStatus AggregateWithBucket(TsScanStats* ts_scan_stats);
   KStatus AggregateWithoutBucket(TsScanStats* ts_scan_stats);
@@ -269,6 +271,7 @@ class TsAggIteratorImpl : public TsStorageIteratorImpl {
   int64_t time_bucket_block_spans_index_;
   timestamp64 time_bucket_begin_ts_;
   std::vector<std::vector<std::shared_ptr<TsBlockSpan>>> time_bucket_block_spans_;
+  std::vector<char*> result_bitmap_;
 };
 
 class TsOffsetIteratorImpl : public TsIterator {
