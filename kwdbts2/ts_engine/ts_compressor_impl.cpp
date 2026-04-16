@@ -1448,23 +1448,23 @@ bool CompressorManager::CompressVarchar(TSSlice input, TsBufferBuilder *output, 
       break;
   }
   static_assert(sizeof(alg) == sizeof(uint16_t));
-  PutFixed16(output, static_cast<uint16_t>(alg));
   if (alg == CompressAlgo::kPlain) {
+    PutFixed16(output, static_cast<uint16_t>(alg));
     output->append(input.data, input.len);
     return true;
   }
+  TsBufferBuilder tmp;
+  PutFixed16(&tmp, static_cast<uint16_t>(alg));
   auto it = ts_compressors_.find(alg);
   if (it == ts_compressors_.end()) {
     LOG_ERROR("Invalid general compression algorithm: %d", static_cast<int>(alg));
     return false;
   }
-  TsBufferBuilder tmp;
   bool ok = it->second->Compress(input, &tmp, compress_levels_.at(alg)[GetLevelIdx(level)]);
   if (!ok) {
     return false;
   }
   if (tmp.size() >= input.len) {
-    output->clear();
     PutFixed16(output, static_cast<uint16_t>(CompressAlgo::kPlain));
     output->append(input.data, input.len);
     return true;
