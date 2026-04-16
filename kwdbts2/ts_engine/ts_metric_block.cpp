@@ -28,9 +28,9 @@ bool TsMetricBlock::GetCompressedData(TsBufferBuilder& output, TsMetricCompressI
   const auto& mgr = CompressorManager::GetInstance();
   // 1. Compress OSN
   TSSlice osn_slice{reinterpret_cast<char*>(osn_buffer_.data()), osn_buffer_.size() * sizeof(uint64_t)};
-  TsCompAlg osn_alg = compress_ts_and_osn ? TsCompAlg::kSimple8B_u64 : TsCompAlg::kPlain;
+  EncodeAlgo osn_alg = compress_ts_and_osn ? EncodeAlgo::kSimple8B_u64 : EncodeAlgo::kPlain;
   size_t origin_size = output.size();
-  auto ok = mgr.CompressData(osn_slice, nullptr, count_, &output, osn_alg, GenCompAlg::kPlain);
+  auto ok = mgr.CompressData(osn_slice, nullptr, count_, &output, osn_alg, CompressAlgo::kPlain, 0);
   if (!ok) {
     LOG_ERROR("compress osn error");
     return FAIL;
