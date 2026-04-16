@@ -954,7 +954,6 @@ size_t SnappyString::GetUncompressedSize(TSSlice data, uint64_t count) const {
 }
 
 bool LZ4String::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const {
-  out->clear();
   if (data.len == 0) {
     return true;
   }
@@ -969,7 +968,7 @@ bool LZ4String::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int
     LOG_ERROR("LZ4 Compress Failed! Invalid destination capacity for input size %d.", input_size);
     return false;
   }
-  out->reserve(kGeneralCompressionHeaderSize + static_cast<size_t>(dst_capacity));
+  out->reserve(out->size() + kGeneralCompressionHeaderSize + static_cast<size_t>(dst_capacity));
   PutFixed64(out, data.len);
   const size_t compressed_offset = out->size();
   out->resize(compressed_offset + static_cast<size_t>(dst_capacity));
@@ -1017,7 +1016,6 @@ size_t LZ4String::GetUncompressedSize(TSSlice data, uint64_t count) const {
 }
 
 bool ZSTDString::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const {
-  out->clear();
   if (data.len == 0) {
     out->append(data);
     return true;
@@ -1027,7 +1025,7 @@ bool ZSTDString::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, in
     LOG_ERROR("ZSTD Compress Failed! Input size is incorrect (too large or negative).");
     return false;
   }
-  out->reserve(kGeneralCompressionHeaderSize + dst_capacity);
+  out->reserve(out->size() + kGeneralCompressionHeaderSize + dst_capacity);
   PutFixed64(out, data.len);
   const size_t compressed_offset = out->size();
   out->resize(compressed_offset + dst_capacity);
@@ -1073,7 +1071,6 @@ size_t ZSTDString::GetUncompressedSize(TSSlice data, uint64_t count) const {
 }
 
 bool ZLIBString::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, int level) const {
-  out->clear();
   if (data.len == 0) {
     out->append(data);
     return true;
@@ -1096,7 +1093,7 @@ bool ZLIBString::Compress(TSSlice data, uint64_t count, TsBufferBuilder *out, in
     return false;
   }
 
-  out->reserve(kGeneralCompressionHeaderSize + static_cast<size_t>(dst_capacity));
+  out->reserve(out->size() + kGeneralCompressionHeaderSize + static_cast<size_t>(dst_capacity));
   PutFixed64(out, data.len);
   const size_t compressed_offset = out->size();
   out->resize(compressed_offset + static_cast<size_t>(dst_capacity));
