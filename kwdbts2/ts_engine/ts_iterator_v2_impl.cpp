@@ -1840,7 +1840,11 @@ void TsAggIteratorImpl::Reset() {
 void TsAggIteratorImpl::TimeBucketReset() {
   for (int i = 0; i < kw_scan_cols_.size(); ++i) {
     auto kw_col_idx = kw_scan_cols_[i];
-    if (!isVarLenType(attrs_[kw_col_idx].type) || scan_agg_types_[i] == Sumfunctype::COUNT) {
+    if (!isVarLenType(attrs_[kw_col_idx].type) || scan_agg_types_[i] == Sumfunctype::COUNT
+                                    || scan_agg_types_[i] == Sumfunctype::FIRSTTS
+                                    || scan_agg_types_[i] == Sumfunctype::LASTTS
+                                    || scan_agg_types_[i] == Sumfunctype::FIRSTROWTS
+                                    || scan_agg_types_[i] == Sumfunctype::LASTROWTS) {
       final_agg_data_[i].len = -1;
       final_agg_data_[i].data += scan_agg_types_[i] == Sumfunctype::COUNT ? sizeof(uint64_t) :
                                   scan_agg_types_[i] == Sumfunctype::SUM ? sizeof(int64_t) :
@@ -2027,7 +2031,11 @@ KStatus TsAggIteratorImpl::Next(ResultSet* res, k_uint32* count, bool* is_finish
     // Initialize batch agg results
     for (int i = 0; i < kw_scan_cols_.size(); ++i) {
       auto kw_col_idx = kw_scan_cols_[i];
-      if (!isVarLenType(attrs_[kw_col_idx].type) || scan_agg_types_[i] == Sumfunctype::COUNT) {
+      if (!isVarLenType(attrs_[kw_col_idx].type) || scan_agg_types_[i] == Sumfunctype::COUNT
+                                || scan_agg_types_[i] == Sumfunctype::FIRSTTS
+                                || scan_agg_types_[i] == Sumfunctype::LASTTS
+                                || scan_agg_types_[i] == Sumfunctype::FIRSTROWTS
+                                || scan_agg_types_[i] == Sumfunctype::LASTROWTS) {
         int32_t type_size = scan_agg_types_[i] == Sumfunctype::COUNT ? sizeof(uint64_t) :
                               scan_agg_types_[i] == Sumfunctype::SUM ? sizeof(int64_t) :
                                 (scan_agg_types_[i] == Sumfunctype::FIRSTTS
@@ -2070,7 +2078,11 @@ KStatus TsAggIteratorImpl::Next(ResultSet* res, k_uint32* count, bool* is_finish
       for (k_uint32 i = 0; i < kw_scan_cols_.size(); ++i) {
         uint32_t col_idx = (scan_agg_types_[i] == Sumfunctype::MAX_EXTEND || scan_agg_types_[i] == Sumfunctype::MIN_EXTEND) ?
                   agg_extend_cols_[i] : kw_scan_cols_[i];
-        if (!isVarLenType(attrs_[col_idx].type) || scan_agg_types_[i] == Sumfunctype::COUNT) {
+        if (!isVarLenType(attrs_[col_idx].type) || scan_agg_types_[i] == Sumfunctype::COUNT
+                                || scan_agg_types_[i] == Sumfunctype::FIRSTTS
+                                || scan_agg_types_[i] == Sumfunctype::LASTTS
+                                || scan_agg_types_[i] == Sumfunctype::FIRSTROWTS
+                                || scan_agg_types_[i] == Sumfunctype::LASTROWTS) {
           Batch* b = const_cast<Batch*>(res->data[i][0]);
           if (final_agg_data_[i].len == -1) {
             // null value
@@ -2256,8 +2268,9 @@ KStatus TsAggIteratorImpl::GenerateTimeBucketAggData() {
     const k_uint32 col_idx = (agg_type == Sumfunctype::MAX_EXTEND || agg_type == Sumfunctype::MIN_EXTEND) ?
                              agg_extend_cols_[i] : kw_scan_cols_[i];
     auto kw_col_idx = kw_scan_cols_[i];
-    if (isVarLenType(attrs_[kw_col_idx].type) && scan_agg_types_[i] != Sumfunctype::COUNT
-          && final_agg_data_[i].data == nullptr) {
+    if (isVarLenType(attrs_[kw_col_idx].type) && final_agg_data_[i].data == nullptr &&
+          !(agg_type == Sumfunctype::FIRSTTS || agg_type == Sumfunctype::LASTTS
+              || agg_type == Sumfunctype::FIRSTROWTS || agg_type == Sumfunctype::LASTROWTS)) {
       free(final_agg_data_[i].data);
       final_agg_data_[i].data = nullptr;
       final_agg_data_[i].len = 0;
