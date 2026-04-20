@@ -1036,6 +1036,28 @@ func (m *Memo) ClearFlag(flag int) {
 	m.CheckHelper.flags &= ^flag
 }
 
+// CheckRelExprHasGroupWindowFunction checks whether grouping window function is used in RelExpr
+func (m *Memo) CheckRelExprHasGroupWindowFunction(src *RelExpr) bool {
+	switch source := (*src).(type) {
+	case *GroupByExpr, *ScalarGroupByExpr:
+		if s, ok := source.Private().(*GroupingPrivate); ok {
+			if s.GroupWindowId > 0 {
+				return true
+			}
+		}
+		break
+	default:
+		for i := 0; i < source.ChildCount(); i++ {
+			if val, ok := source.Child(i).(RelExpr); ok {
+				if m.CheckRelExprHasGroupWindowFunction(&val) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // CheckWhiteListAndAddSynchronize check if the memo expr can execute in ts engine
 // according to white list and set flag to add Synchronizer.
 // src is the expr of memo tree.
@@ -1101,7 +1123,7 @@ func (m *Memo) addOrderedColumn(src *bestProps) {
 func (m *Memo) addOrderInGroupWindow(source *GroupByExpr, input RelExpr) {
 	// set sortExpr to input of project if group window function not exec in ts engine.
 	// sort columns are ptag(if group cols contain ptag) and tsCol.
-	if proj, ok1 := input.(*ProjectExpr); ok1 && m.CheckFlag(opt.GroupWindowUseOrderScan) && source.GroupWindowId > 0 {
+	if proj, ok1 := input.(*ProjectExpr); ok1 && source.GroupWindowId > 0 {
 		sortExpr1 := &SortExpr{Input: proj.Input}
 		provided := sortExpr1.ProvidedPhysical()
 		if tsColID := m.GetTSColIDInGroupWindow(nil, source.GroupWindowId); tsColID > 0 {
@@ -1133,7 +1155,7 @@ func (m *Memo) addOrder(expr opt.Expr) {
 
 // AddOrderWithGroupWindow if we use group window function, we need to explicitly add orderByExpr.
 func (m *Memo) AddOrderWithGroupWindow(src RelExpr) {
-	if !m.CheckFlag(opt.IncludeTSTable) || !m.CheckFlag(opt.GroupWindowUseOrderScan) {
+	if !m.CheckFlag(opt.IncludeTSTable) || !m.CheckRelExprHasGroupWindowFunction(&src) {
 		return
 	}
 	m.addOrder(src)
@@ -1594,15 +1616,36 @@ func (m *Memo) checkAggStatisticUsable(aggs []AggregationsItem) bool {
 		return false
 	}
 	for i := range aggs {
-		switch aggs[i].Agg.(type) {
-		case *SumExpr, *MinExpr, *MaxExpr, *CountExpr, *FirstExpr, *FirstTimeStampExpr, *FirstRowExpr, *AvgExpr,
-			*FirstRowTimeStampExpr, *LastExpr, *LastTimeStampExpr, *LastRowExpr, *LastRowTimeStampExpr, *CountRowsExpr, *ConstAggExpr, *MinExtendExpr, *MaxExtendExpr:
+		switch t := aggs[i].Agg.(type) {
+		case *FirstExpr, *FirstTimeStampExpr, *FirstRowExpr, *FirstRowTimeStampExpr,
+			*LastExpr, *LastTimeStampExpr, *LastRowExpr, *LastRowTimeStampExpr:
+			if !m.tsInputIsFirstColumn(t.Child(0).(opt.ScalarExpr), t.Child(1).(opt.ScalarExpr)) {
+				return false
+			}
+		case *SumExpr, *MinExpr, *MaxExpr, *CountExpr, *AvgExpr, *CountRowsExpr, *ConstAggExpr, *MinExtendExpr, *MaxExtendExpr:
 		default:
 			return false
 		}
 	}
 
 	return true
+}
+
+// tsInputIsFirstColumn checks whether tsInput is the first column in the physical table.
+// If not, statistical information cannot be used.
+func (m *Memo) tsInputIsFirstColumn(input opt.ScalarExpr, tsInput opt.ScalarExpr) bool {
+	if inputCol, ok := input.(*VariableExpr); ok {
+		if tsInputCol, ok1 := tsInput.(*VariableExpr); ok1 {
+			tblID := m.Metadata().ColumnMeta(inputCol.Col).Table
+			if tblID != 0 {
+				index := tblID.ColumnOrdinal(tsInputCol.Col)
+				if index == 0 {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // CrossEngCheckResults includes various flags and an error status related to the optimization and execution checks in ts engine.
@@ -2267,9 +2310,17 @@ func checkParallelAgg(expr opt.Expr) (bool, bool) {
 	return false, false
 }
 
-// if the group by columns only include the group window function columns and pTag columns, set groupByAllPTag
-func (m *Memo) setGroupByAllPTagForGroupWindow(gp *GroupingPrivate) {
-	if m.CheckFlag(opt.GroupWindowUseOrderScan) && gp.GroupWindowId > 0 && gp.GroupingCols.Len() > 1 {
+// we should deal with memo.CheckHelper if group window function is used in the plan:
+// 1. set GroupWindowUseOrderScan
+// 2. if the group by columns only include the group window function columns and pTag columns, set groupByAllPTag
+func (m *Memo) dealWithCheckHelperForGroupWindow(gp *GroupingPrivate) {
+	if gp.GroupWindowId > 0 {
+		m.SetFlag(opt.GroupWindowUseOrderScan)
+	} else {
+		m.ClearFlag(opt.GroupWindowUseOrderScan)
+		return
+	}
+	if gp.GroupingCols.Len() > 1 {
 		groupByAllPTag := true
 		var tableID opt.TableID
 		pTagNum := 0
@@ -2311,7 +2362,7 @@ func (m *Memo) setGroupByAllPTagForGroupWindow(gp *GroupingPrivate) {
 func (m *Memo) checkGroupBy(
 	input RelExpr, aggs *AggregationsExpr, gp *GroupingPrivate,
 ) (ret aggCrossEngCheckResults) {
-	m.setGroupByAllPTagForGroupWindow(gp)
+	m.dealWithCheckHelperForGroupWindow(gp)
 	ret.commonRet = m.CheckWhiteListAndAddSynchronizeImp(&input)
 	if ret.commonRet.err != nil || m.CheckHelper.GroupHint == keys.ForceRelationalGroup {
 		// case: error or hint force group by can not execute in ts engine.
@@ -2321,7 +2372,7 @@ func (m *Memo) checkGroupBy(
 	ret.isParallel = true
 
 	// check group window
-	if m.CheckFlag(opt.GroupWindowUseOrderScan) && gp.GroupWindowId > 0 {
+	if gp.GroupWindowId > 0 {
 		// need execute in AE engine
 		if m.CheckGroupByAllPTag() || m.CheckOnlyOnePTagValue() {
 			if !ret.commonRet.execInTSEngine {

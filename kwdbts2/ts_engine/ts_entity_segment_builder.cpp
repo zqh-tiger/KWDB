@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <utility>
 
@@ -258,6 +259,7 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
 
   // write column block data and column agg
   assert(n_cols_ == metric_schema_.size() + 1);
+  AttributeInfo attr_info;
   for (int col_idx = 0; col_idx < n_cols_; ++col_idx) {
     DATATYPE d_type = col_idx == 0 ? DATATYPE::INT64 : col_idx != 1 ?
                       static_cast<DATATYPE>(metric_schema_[col_idx - 1].type) : DATATYPE::TIMESTAMP64;
@@ -274,14 +276,22 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
     }
     TsBitmapBase* b = has_bitmap ? block.bitmap.get() : nullptr;
     // compress col data & write to buffer
-    auto [first, second] = mgr.GetDefaultAlgorithm(d_type);
+    if (0 == col_idx) {
+      attr_info.encode_algo = roachpb::ENCODE_ALGO_SIMPLE8B;
+      attr_info.compress_algo = roachpb::COMPRESS_ALGO_DISABLED;
+      attr_info.compress_level = roachpb::COMPRESS_LEVEL_UNSPECIFIED;
+    } else {
+      attr_info = metric_schema_[col_idx - 1];
+    }
+    auto [encode_algo, compress_algo] = mgr.GetAlgorithm(d_type, attr_info);
     if (is_var_col) {
       // varchar offset use simple8b algorithm
-      first = TsCompAlg::kSimple8B_V2_u32;
+      encode_algo = EncodeAlgo::kSimple8B_V2_u32;
       // var offset data
       TsBufferBuilder compressed;
       TSSlice var_offsets = {block.buffer.data(), n_rows_ * sizeof(uint32_t)};
-      bool ok = mgr.CompressData(var_offsets, nullptr, n_rows_, &compressed, first, second);
+      bool ok = mgr.CompressData(var_offsets, nullptr, n_rows_, &compressed,
+        encode_algo, compress_algo, attr_info.compress_level);
       if (!ok) {
         LOG_ERROR("Compress var offset data failed, tb_id [%u], tb_version [%u], entity_id [%lu], col_idx [%d]",
           table_id_, table_version_, entity_id_, col_idx);
@@ -294,7 +304,7 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
       compressed.clear();
       uint32_t var_data_offset = EngineOptions::max_rows_per_block * sizeof(uint32_t);
       ok = mgr.CompressVarchar({block.buffer.data() + var_data_offset, block.buffer.size() - var_data_offset},
-                               &compressed, GenCompAlg::kSnappy);
+                        &compressed, compress_algo, metric_schema_[col_idx - 1].compress_level);
       if (!ok) {
         LOG_ERROR("Compress var data failed, tb_id [%u], tb_version [%u], entity_id [%lu], col_idx [%d]",
           table_id_, table_version_, entity_id_, col_idx);
@@ -304,7 +314,7 @@ KStatus TsEntityBlockBuilder::GetCompressData(TsEntitySegmentBlockItem& blk_item
     } else {
       TsBufferBuilder compressed;
       TSSlice plain{block.buffer.data(), block.buffer.size()};
-      mgr.CompressData(plain, b, n_rows_, &compressed, first, second);
+      mgr.CompressData(plain, b, n_rows_, &compressed, encode_algo, compress_algo, attr_info.compress_level);
       data_buffer->append(compressed);
     }
     // col offset
@@ -775,32 +785,32 @@ KStatus TsEntitySegmentBuilder::WriteBatch(TSTableID tbl_id, uint32_t entity_id,
     block_data_header_size = 60;
     block_item.block_version = 0;
   } else if (batch_version >= 1 && batch_version < BATCH_VERSION_LIMIT) {
-    block_item.block_version =
-        *reinterpret_cast<uint32_t*>(block_data.data + TsBatchData::block_version_offset_in_span_data_);
+    block_item.block_version = DecodeFixed32(block_data.data + TsBatchData::block_version_offset_in_span_data_);
   } else {
     LOG_ERROR("TsEntitySegmentBuilder::WriteBatch failed, invalid batch version: %u", batch_version);
     return FAIL;
   }
 
-  uint32_t n_cols = *reinterpret_cast<uint32_t*>(block_data.data + TsBatchData::n_cols_offset_in_span_data_);
-  uint32_t n_rows = *reinterpret_cast<uint32_t*>(block_data.data +  + TsBatchData::n_rows_offset_in_span_data_);
+  uint32_t n_cols = DecodeFixed32(block_data.data + TsBatchData::n_cols_offset_in_span_data_);
+  uint32_t n_rows = DecodeFixed32(block_data.data + TsBatchData::n_rows_offset_in_span_data_);
 
   block_item.entity_id = entity_id;
   block_item.prev_block_id = entity_items_[entity_id].cur_block_id;  // pre block item id
   block_item.table_version = table_version;
   block_item.n_cols = n_cols;
   block_item.n_rows = n_rows;
-  block_item.block_len = *reinterpret_cast<uint32_t*>(block_data.data + block_data_header_size
-                         + (n_cols - 1) * sizeof(uint32_t)) + sizeof(uint32_t) * n_cols;
-  block_item.min_ts = *reinterpret_cast<timestamp64*>(block_data.data + TsBatchData::min_ts_offset_in_span_data_);
-  block_item.max_ts = *reinterpret_cast<timestamp64*>(block_data.data + TsBatchData::max_ts_offset_in_span_data_);
-  block_item.min_osn = *reinterpret_cast<uint64_t*>(block_data.data + TsBatchData::min_osn_offset_in_span_data_);
-  block_item.max_osn = *reinterpret_cast<uint64_t*>(block_data.data + TsBatchData::max_osn_offset_in_span_data_);
-  block_item.first_osn = *reinterpret_cast<uint64_t*>(block_data.data + TsBatchData::first_osn_offset_in_span_data_);
-  block_item.last_osn = *reinterpret_cast<uint64_t*>(block_data.data + TsBatchData::last_osn_offset_in_span_data_);
+  const char* block_len_ptr = block_data.data + block_data_header_size + (n_cols - 1) * sizeof(uint32_t);
+  block_item.block_len = DecodeFixed32(block_len_ptr) + sizeof(uint32_t) * n_cols;
+  block_item.min_ts = DecodeFixedTimestamp64(block_data.data + TsBatchData::min_ts_offset_in_span_data_);
+  block_item.max_ts = DecodeFixedTimestamp64(block_data.data + TsBatchData::max_ts_offset_in_span_data_);
+  block_item.min_osn = DecodeFixed64(block_data.data + TsBatchData::min_osn_offset_in_span_data_);
+  block_item.max_osn = DecodeFixed64(block_data.data + TsBatchData::max_osn_offset_in_span_data_);
+  block_item.first_osn = DecodeFixed64(block_data.data + TsBatchData::first_osn_offset_in_span_data_);
+  block_item.last_osn = DecodeFixed64(block_data.data + TsBatchData::last_osn_offset_in_span_data_);
 
-  block_item.agg_len = *reinterpret_cast<uint32_t*>(block_data.data + block_data_header_size + block_item.block_len
-                       + (n_cols - 2) * sizeof(uint32_t))  + sizeof(uint32_t) * (n_cols - 1);
+  const char* agg_len_ptr = block_data.data + block_data_header_size + block_item.block_len
+                            + (n_cols - 2) * sizeof(uint32_t);
+  block_item.agg_len = DecodeFixed32(agg_len_ptr) + sizeof(uint32_t) * (n_cols - 1);
 
   TSSlice data_buffer = {block_data.data + block_data_header_size, block_item.block_len};
   KStatus s = block_file_builder_->AppendBlock(data_buffer, &block_item.block_offset);

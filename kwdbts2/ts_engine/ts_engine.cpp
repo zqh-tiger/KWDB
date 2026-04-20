@@ -46,7 +46,9 @@ size_t EngineOptions::min_rows_per_block = 512;
 int64_t EngineOptions::default_partition_interval = 3600 * 24 * 10;
 // default block cache max size is set to 1G
 int64_t EngineOptions::block_cache_max_size = 1024 * 1024 * 1024;
-uint8_t EngineOptions::compress_stage = 2;
+uint8_t EngineOptions::compress_stage = 3;
+CompressLevel EngineOptions::compress_level = CompressLevel::MEDIUM;
+CompressAlgo EngineOptions::compression_algorithm = CompressAlgo::kLz4;
 bool EngineOptions::compress_last_segment = true;
 #ifdef KWBASE_OSS
 bool EngineOptions::force_sync_file = false;
@@ -67,10 +69,10 @@ namespace kwdbts {
 unsigned seed = std::chrono::system_clock::now().time_since_epoch().count();
 std::mt19937 gen(seed);
 const char schema_directory[] = "schema";
-constexpr char vroup_cfg_file[] = "ts-vgroup.cfg";
+constexpr char vgroup_cfg_file[] = "ts-vgroup.cfg";
 
 KStatus loadVGroupCfg(const fs::path& ts_store_path, std::map<int, std::string>& vgroup_cfg) {
-  fs::path vgroup_cfg_path = ts_store_path / std::string(vroup_cfg_file);
+  fs::path vgroup_cfg_path = ts_store_path / std::string(vgroup_cfg_file);
   std::ifstream ifs(vgroup_cfg_path);
   if (!ifs.is_open()) {
     return SUCCESS;
@@ -403,7 +405,6 @@ void TSEngineImpl::PreClearDroppedTables() {
       // This directory might not exist, but we don't mind, we just need to delete.
       Remove(db_path / schema_directory / fname.substr(split_pos + 1));
       Remove(db_path / schema_directory / fname);
-      auto table_id = std::stol(fname.substr(split_pos + 1));
     }
   }
 }
@@ -514,10 +515,13 @@ KStatus TSEngineImpl::GetTsTable(kwdbContext_p ctx, const KTableKey& table_id, s
       if (table != nullptr) {
         ts_table = table;
         tables_cache_->Put(table_id, ts_table);
-        return KStatus::SUCCESS;
+        // Do not return here: the first cache-miss lookup still needs to run
+        // the dropped/version checks below so requested schema versions are
+        // loaded before the handle is returned to callers.
+      } else {
+        LOG_ERROR("make TsTableV2Impl failed for table[%lu]", table_id);
+        return KStatus::FAIL;
       }
-      LOG_ERROR("make TsTableV2Impl failed for table[%lu]", table_id);
-      return KStatus::FAIL;
     }
   }
 
@@ -529,6 +533,7 @@ KStatus TSEngineImpl::GetTsTable(kwdbContext_p ctx, const KTableKey& table_id, s
     // 2. if table no exist. try to get schema from go level.
     LOG_INFO("try creating table[%lu] by schema from rocksdb. ", table_id);
 #ifdef WITH_TESTS
+    LOG_ERROR("Not support compile option WITH_TESTS");
     return KStatus::FAIL;
 #endif
     char* error;
@@ -774,7 +779,6 @@ KStatus TSEngineImpl::PutData(kwdbContext_p ctx, const KTableKey& table_id, uint
       created_tag_num += 1;
     }
     auto vgroup = GetVGroupByID(ctx, vgroup_id);
-    // payload_size += cur_pd.len;
     s =  dynamic_pointer_cast<TsTableV2Impl>(ts_table)->PutData(ctx, vgroup, &cur_pd, 1, mtr_id, entity_id,
             not_create_entity, dedup_result, (DedupRule)(dedup_result->dedup_rule), write_wal);
     if (s != KStatus::SUCCESS) {
@@ -939,9 +943,9 @@ KStatus TSEngineImpl::DropColumn(kwdbContext_p ctx, const KTableKey &table_id, c
   return KStatus::SUCCESS;
 }
 
-KStatus TSEngineImpl::AlterColumnType(kwdbContext_p ctx, const KTableKey &table_id, char *transaction_id,
-                                        bool& is_dropped, TSSlice new_column, TSSlice origin_column,
-                                        uint32_t cur_version, uint32_t new_version, string &err_msg) {
+KStatus TSEngineImpl::AlterColumn(kwdbContext_p ctx, const KTableKey &table_id, char *transaction_id,
+                                  bool& is_dropped, TSSlice new_column, TSSlice origin_column,
+                                  uint32_t cur_version, uint32_t new_version, AlterType alter_type, string &err_msg) {
   roachpb::KWDBKTSColumn new_col_meta;
   if (!new_col_meta.ParseFromArray(new_column.data, new_column.len)) {
     LOG_ERROR("ParseFromArray Internal Error");
@@ -957,14 +961,14 @@ KStatus TSEngineImpl::AlterColumnType(kwdbContext_p ctx, const KTableKey &table_
   // Get transaction ID.
   uint64_t x_id = tsx_manager_sys_->getMtrID(transaction_id);
 
-  // Write Alter DDL into WAL, which type is ALTER_COLUMN_TYPE.
-  s = wal_sys_->WriteDDLAlterWAL(ctx, x_id, table_id, AlterType::ALTER_COLUMN_TYPE, cur_version, new_version, origin_column);
+  // Write Alter DDL into WAL
+  s = wal_sys_->WriteDDLAlterWAL(ctx, x_id, table_id, alter_type, cur_version, new_version, origin_column);
   if (s != KStatus::SUCCESS) {
     err_msg = "Write WAL error";
     LOG_ERROR("%s", err_msg.c_str());
     return s;
   }
-  s = ts_table->AlterTable(ctx, AlterType::ALTER_COLUMN_TYPE, &new_col_meta, cur_version, new_version, err_msg);
+  s = ts_table->AlterTable(ctx, alter_type, &new_col_meta, cur_version, new_version, err_msg);
   if (s != KStatus::SUCCESS) {
     LOG_ERROR("Alter column type failed, table id: %lu, cur_version: %d, new_version: %d, error message: %s.",
     table_id, cur_version, new_version, err_msg.c_str());
@@ -1320,7 +1324,6 @@ KStatus TSEngineImpl::CreateCheckpoint(kwdbContext_p ctx) {
   if (!EnableWAL()) {
     return KStatus::SUCCESS;
   } else if (EngineOptions::isSingleNode() || !exist_explict_txn.load()) {
-    std::vector<uint64_t> vgrp_lsn;
     // 1. switch engine wal file
     KStatus s = wal_mgr_->SwitchNextFile();
     if (s == KStatus::FAIL) {
@@ -1328,6 +1331,7 @@ KStatus TSEngineImpl::CreateCheckpoint(kwdbContext_p ctx) {
       return s;
     }
 
+    std::vector<uint64_t> vgrp_lsn;
     // 2. switch vgroup wal file
     for (const auto &vgrp : vgroups_) {
       vgrp->GetWALManager()->Lock();
@@ -1844,7 +1848,10 @@ KStatus TSEngineImpl::DropResidualTsTable(kwdbContext_p ctx) {
     return s;
   }
   for (auto table_id : tables) {
-    bool is_exist = checkTableMetaExist(table_id);
+    bool is_exist = false;
+#ifndef WITH_TESTS
+    is_exist = checkTableMetaExist(table_id);
+#endif
     if (!is_exist) {
       s = DropTsTable(ctx, table_id);
       if (s != KStatus::SUCCESS) {
@@ -2230,7 +2237,7 @@ KStatus TSEngineImpl::Recover(kwdbContext_p ctx) {
   }
 
   // 4. do rollback
-  for (auto txn : txn_op) {
+  for (auto& txn : txn_op) {
     if (txn.second == txnOp::rollback) {
       if (TSMtrRollback(ctx, 0, 0, txn.first, true) == KStatus::FAIL) return KStatus::FAIL;
     }
@@ -2252,7 +2259,7 @@ KStatus TSEngineImpl::Recover(kwdbContext_p ctx) {
   }
 
   // 5. trig all vgroup flush
-  for (const auto &vgrp : vgroups_) {
+  for (const auto& vgrp : vgroups_) {
     s = vgrp->Flush();
     if (s == KStatus::FAIL) {
       LOG_ERROR("Failed to flush metric file.")
@@ -2405,23 +2412,13 @@ KStatus TSEngineImpl::CreateSnapshotForWrite(kwdbContext_p ctx, const KTableKey&
   }
   *snapshot_id = insertToSnapshotCache(ts_snapshot_info);
   ts_snapshot_info.id = *snapshot_id;
-  uint64_t count;
-  s = table->GetRangeRowCount(ctx, begin_hash, end_hash, ts_span, osn, &count);
+  s = table->DeleteTotalRange(ctx, begin_hash, end_hash, ts_span, 1, osn);
   if (s == KStatus::FAIL) {
-    LOG_ERROR("GetRangeRowCount [%lu] failed.", table_id);
+    LOG_ERROR("DeleteTotalRange [%lu] failed.", table_id);
     return s;
   }
-  if (count > 0) {
-    LOG_WARN("range hash[%lu ~ %lu], ts[%ld ~ %ld] has row [%lu], we clear them now.",
-      begin_hash, end_hash, ts_span.begin, ts_span.end, count);
-    s = table->DeleteTotalRange(ctx, begin_hash, end_hash, ts_span, 1, osn);
-    if (s == KStatus::FAIL) {
-      LOG_ERROR("DeleteTotalRange [%lu] failed.", table_id);
-      return s;
-    }
-  }
-  LOG_INFO("CreateSnapshotForWrite [%lu] succeeded. range hash[%lu ~ %lu], ts[%ld ~ %ld] has row [%lu]",
-           table_id, begin_hash, end_hash, ts_span.begin, ts_span.end, count)
+  LOG_INFO("CreateSnapshotForWrite [%lu] succeeded. range hash[%lu ~ %lu], ts[%ld ~ %ld].",
+           table_id, begin_hash, end_hash, ts_span.begin, ts_span.end);
   return KStatus::SUCCESS;
 }
 
@@ -2636,7 +2633,6 @@ KStatus TSEngineImpl::WriteSnapshotRollback(kwdbContext_p ctx, uint64_t snapshot
   auto s = CancelBatchJob(ctx, snapshot_id, osn);
   if (s != KStatus::SUCCESS) {
       LOG_ERROR("CancelBatchJob failed.");
-      return s;
   }
   uint64_t count;
   s = ts_snapshot_info.table->DeleteTotalRange(ctx, ts_snapshot_info.begin_hash, ts_snapshot_info.end_hash,
@@ -2752,12 +2748,6 @@ KStatus TSEngineImpl::Vacuum(kwdbContext_p ctx, bool force) {
     vgroup->Vacuum(ctx, force);
   }
   return SUCCESS;
-}
-
-double divideAndRound(double a, double b, int precision) {
-  double result = a / b;
-  double factor = std::pow(10.0, precision);
-  return std::round(result * factor) / factor;
 }
 
 KStatus ConstructTableBlocksDistribution(const std::shared_ptr<TsTableSchemaManager>& tb_schema_mgr,
