@@ -2025,7 +2025,14 @@ KStatus TsAggIteratorImpl::Next(ResultSet* res, k_uint32* count, bool* is_finish
     }
 
     // Split block spans to multiple time buckets.
-    std::vector<shared_ptr<TsBlockSpan>> ts_block_spans = SortBlockSpans(ts_block_spans_);
+    std::vector<shared_ptr<TsBlockSpan>> ts_block_spans;
+    if (ts_block_spans_.size() <= 1) {
+      if (!ts_block_spans_.empty()) {
+        ts_block_spans.push_back(std::move(*ts_block_spans_.begin()));
+      }
+    } else {
+      ts_block_spans = SortBlockSpans(ts_block_spans_);
+    }
 
     std::vector<uint64_t> block_spans_index;
     if (!ts_block_spans.empty()) {
