@@ -29,7 +29,7 @@
 
 namespace kwdbts {
 
-#define KW_BITMAP_SIZE(n)  (n + 7) >> 1
+#define KW_BITMAP_SIZE(n)  (n + 7) >> 3
 
 typedef enum {
   SCAN_STATUS_UNKNOWN,

@@ -2067,7 +2067,7 @@ KStatus TsAggIteratorImpl::Next(ResultSet* res, k_uint32* count, bool* is_finish
         size_t size = (KW_BITMAP_SIZE(*count)) + (*count) * sizeof(bool) + (*count) * type_size;
         // buffer contains bitmap, overflow and value
         result_bitmap_[i] = static_cast<char*>(malloc(size));
-        memset(result_bitmap_[i], 0, size);
+        memset(result_bitmap_[i], 0, (KW_BITMAP_SIZE(*count)) + (*count) * sizeof(bool));
         final_agg_data_[i].len = -1;
         final_agg_data_[i].data = result_bitmap_[i] + (KW_BITMAP_SIZE(*count)) + (*count) * sizeof(bool);
         bool* overflow = reinterpret_cast<bool*>(result_bitmap_[i] + (KW_BITMAP_SIZE(*count)));
