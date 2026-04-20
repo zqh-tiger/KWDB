@@ -1851,6 +1851,7 @@ void TsAggIteratorImpl::Reset() {
 }
 
 void TsAggIteratorImpl::TimeBucketReset() {
+  // Move to the next agg result address for batch agg
   for (int i = 0; i < kw_scan_cols_.size(); ++i) {
     auto kw_col_idx = kw_scan_cols_[i];
     if (!isVarLenType(attrs_[kw_col_idx].type) || scan_agg_types_[i] == Sumfunctype::COUNT
@@ -2063,6 +2064,7 @@ KStatus TsAggIteratorImpl::Next(ResultSet* res, k_uint32* count, bool* is_finish
         final_agg_data_[i].len = -1;
         final_agg_data_[i].data = result_bitmap_[i] + (KW_BITMAP_SIZE(*count)) + (*count) * sizeof(bool);
         bool* overflow = reinterpret_cast<bool*>(result_bitmap_[i] + (KW_BITMAP_SIZE(*count)));
+        // Create a batch with all agg data
         auto b = new Batch(final_agg_data_[i].data, *count, result_bitmap_[i], 1, overflow);
         final_agg_data_[i].data -= type_size;
         b->is_new = false;
@@ -2108,6 +2110,7 @@ KStatus TsAggIteratorImpl::Next(ResultSet* res, k_uint32* count, bool* is_finish
           VarColumnBatch* b = static_cast<VarColumnBatch*>(const_cast<Batch*>(res->data[i][0]));
           TSSlice& slice = final_agg_data_[i];
           if (slice.data == nullptr) {
+            // null value
             b->setNull(time_bucket_block_spans_index_);
             b->push_back(nullptr);
           } else {
@@ -2249,6 +2252,7 @@ KStatus TsAggIteratorImpl::AggregateWithBucket(TsScanStats* ts_scan_stats) {
 }
 
 KStatus TsAggIteratorImpl::GenerateTimeBucketAggData() {
+  // To support batch agg, we don't malloc / free final_agg_data_[].data
   for (int i = 0; i < scan_agg_types_.size(); ++i) {
     Sumfunctype agg_type = scan_agg_types_[i];
     if (agg_type == Sumfunctype::COUNT || agg_type == Sumfunctype::SUM) {
@@ -3151,6 +3155,7 @@ KStatus TsAggIteratorImpl::UpdateAggregation(std::shared_ptr<TsBlockSpan>& block
         InitAggData(agg_data);
         InitSumValue(agg_data.data, type);
       } else if (agg_data.len == -1) {
+        // To support batch agg, we don't malloc memory here
         agg_data.len = sizeof(int64_t);
         InitSumValue(agg_data.data, type);
       }
@@ -3184,6 +3189,7 @@ KStatus TsAggIteratorImpl::UpdateAggregation(std::shared_ptr<TsBlockSpan>& block
           InitAggData(agg_data);
           InitSumValue(agg_data.data, type);
         } else if (agg_data.len == -1) {
+          // To support batch agg, we don't malloc memory here
           agg_data.len = sizeof(int64_t);
           InitSumValue(agg_data.data, type);
         }
@@ -3232,6 +3238,7 @@ KStatus TsAggIteratorImpl::UpdateAggregation(std::shared_ptr<TsBlockSpan>& block
           InitAggData(agg_data);
           need_copy = true;
         } else if (agg_data.len == -1) {
+          // To support batch agg, we don't malloc memory here
           agg_data.len = size;
           need_copy = true;
         } else if (cmp(pre_max, agg_data.data, type, kw_col_idx == 0 ? 8 : size) > 0) {
@@ -3286,6 +3293,7 @@ KStatus TsAggIteratorImpl::UpdateAggregation(std::shared_ptr<TsBlockSpan>& block
               candidates_[idx] = {-1, row_idx, block_span};
             }
           } else if (agg_data.len == -1) {
+            // To support batch agg, we don't malloc memory here
             agg_data.len = size;
             memcpy(agg_data.data, current, size);
             if (agg_extend_cols_[idx] >= 0) {
@@ -3367,6 +3375,7 @@ KStatus TsAggIteratorImpl::UpdateAggregation(std::shared_ptr<TsBlockSpan>& block
           InitAggData(agg_data);
           need_copy = true;
         } else if (agg_data.len == -1) {
+          // To support batch agg, we don't malloc memory here
           agg_data.len = size;
           need_copy = true;
         } else if (cmp(pre_min, agg_data.data, type, kw_col_idx == 0 ? 8 : size) < 0) {
@@ -3421,6 +3430,7 @@ KStatus TsAggIteratorImpl::UpdateAggregation(std::shared_ptr<TsBlockSpan>& block
               candidates_[idx] = {-1, row_idx, block_span};
             }
           } else if (agg_data.len == -1) {
+            // To support batch agg, we don't malloc memory here
             agg_data.len = size;
             memcpy(agg_data.data, current, size);
             if (agg_extend_cols_[idx] >= 0) {
