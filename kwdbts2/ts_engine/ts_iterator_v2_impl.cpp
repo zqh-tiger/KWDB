@@ -2292,7 +2292,7 @@ KStatus TsAggIteratorImpl::GenerateTimeBucketAggData() {
     const k_uint32 col_idx = (agg_type == Sumfunctype::MAX_EXTEND || agg_type == Sumfunctype::MIN_EXTEND) ?
                              agg_extend_cols_[i] : kw_scan_cols_[i];
     auto kw_col_idx = kw_scan_cols_[i];
-    if (isVarLenType(attrs_[kw_col_idx].type) && final_agg_data_[i].data == nullptr &&
+    if (isVarLenType(attrs_[kw_col_idx].type) && final_agg_data_[i].data != nullptr &&
           !(agg_type == Sumfunctype::FIRSTTS || agg_type == Sumfunctype::LASTTS
               || agg_type == Sumfunctype::FIRSTROWTS || agg_type == Sumfunctype::LASTROWTS)) {
       free(final_agg_data_[i].data);
