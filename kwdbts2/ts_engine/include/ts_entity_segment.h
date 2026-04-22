@@ -110,7 +110,7 @@ class TsEntitySegmentEntityItemFile {
 
   ~TsEntitySegmentEntityItemFile() {}
 
-  KStatus Open();
+  [[nodiscard]] KStatus Open();
 
   KStatus GetEntityItem(uint64_t entity_id, TsEntityItem& entity_item, bool& is_exist);
 
@@ -198,7 +198,7 @@ class TsEntitySegmentMetaManager {
     return entity_header_.SetEntityItemDropped(entity_id);
   }
 
-  KStatus Open();
+  [[nodiscard]] KStatus Open();
 
   KStatus GetAllBlockItems(TSEntityID entity_id, std::vector<TsEntitySegmentBlockItemWithData>* blk_items);
 
@@ -426,7 +426,7 @@ class TsSegmentFile {
 
   ~TsSegmentFile() {}
 
-  KStatus Open();
+  [[nodiscard]] KStatus Open();
 
   uint64_t GetEntityHeaderFileNum() { return meta_mgr_.GetEntityHeaderFileNum(); }
 
@@ -514,9 +514,7 @@ class TsEntitySegment : public TsSegmentBase, public enable_shared_from_this<TsE
 
   ~TsEntitySegment() {}
 
-  KStatus Open() {
-    return segment_file_->Open();
-  }
+  [[nodiscard]] KStatus Open() { return segment_file_->Open(); }
 
   uint64_t GetEntityHeaderFileNum() { return segment_file_->GetEntityHeaderFileNum(); }
 
