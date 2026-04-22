@@ -338,7 +338,6 @@ class TsMemoryAppendOnlyFile : public TsAppendOnlyFile {
       : TsAppendOnlyFile(path), buffer_(std::move(buffer)) {}
   virtual ~TsMemoryAppendOnlyFile();
 
-  
   KStatus Append(TSSlice slice) { return this->AppendImpl(std::string_view{slice.data, slice.len}); }
 
   size_t GetFileSize() const override { return buffer_.size(); }
