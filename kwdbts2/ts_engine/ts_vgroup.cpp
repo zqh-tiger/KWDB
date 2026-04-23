@@ -2131,11 +2131,11 @@ KStatus TsVGroup::Vacuum(kwdbContext_p ctx, bool force) {
 
       auto last_segments = partition->GetVacuumLastSegments(force);
       if (!last_segments.empty()) {
-        TsVersionUpdate update;
         auto total_size = last_segments.size();
         int batch_size = std::max<int>(1, EngineOptions::max_compact_num);
         int start = 0, end = std::min<int>(batch_size, total_size);
         while (start < total_size) {
+          TsVersionUpdate update;
           std::vector<std::shared_ptr<TsLastSegment>> batch_segments;
           std::move(last_segments.begin() + start, last_segments.begin() + end, std::back_inserter(batch_segments));
 
@@ -2144,12 +2144,13 @@ KStatus TsVGroup::Vacuum(kwdbContext_p ctx, bool force) {
             LOG_ERROR("PartitionCompactNoLockImpl failed, [%s]", partition->GetPartitionIdentifierStr().c_str());
             return FAIL;
           }
+          if (version_manager_->ApplyUpdate(&update) == FAIL) {
+            LOG_ERROR("ApplyUpdate failed");
+            return FAIL;
+          }
+          partition = version_manager_->GetPartitionVersion(partition_id);
           start = end;
           end = std::min<int>(start + batch_size, total_size);
-        }
-        if (version_manager_->ApplyUpdate(&update) == FAIL) {
-          LOG_ERROR("ApplyUpdate failed");
-          return FAIL;
         }
       }
 
