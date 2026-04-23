@@ -2149,6 +2149,10 @@ KStatus TsVGroup::Vacuum(kwdbContext_p ctx, bool force) {
             return FAIL;
           }
           partition = version_manager_->GetPartitionVersion(partition_id);
+          if (partition == nullptr) {
+            LOG_ERROR("GetPartitionVersion failed");
+            return FAIL;
+          }
           start = end;
           end = std::min<int>(start + batch_size, total_size);
         }
