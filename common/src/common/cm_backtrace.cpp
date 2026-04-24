@@ -71,7 +71,6 @@ int SignalThreadDump(pid_t pid, uid_t uid, pid_t tid) {
 }
 
 void SetThreadBtPath(char* folder, char* nowTimeStamp) {
-  // dump all threads info
   memset(kThreadBtPath, 0, sizeof(kThreadBtPath));
   GetThreadBtFilePath(kThreadBtPath, folder, nowTimeStamp);
 }
@@ -91,7 +90,7 @@ bool DumpAllThreadBacktrace(char* folder, char* nowTimeStamp) {
   if (dir == NULL) {
     return false;
   }
-
+  // dump all threads info
   while ((entry = readdir(dir)) != NULL) {
     std::string full_path = task_dir;
     full_path += entry->d_name;
@@ -155,7 +154,9 @@ void DumpThreadBacktraceToFile(int fd) {
                      "\nThread 0x%lx pid=%d tid=%ld\n",
                      static_cast<uint64_t>(pthread_self()), getpid(), static_cast<int64_t>(gettid()));
   if (len > 0) {
-    write(fd, thread_info, len);
+    if (-1 == write(fd, thread_info, len)) {
+      return;
+    }
   }
   const k_int32 MAX_FRAME_LEVEL = 128;
   void *array[MAX_FRAME_LEVEL];
@@ -163,7 +164,9 @@ void DumpThreadBacktraceToFile(int fd) {
   char size_info[64];
   len = snprintf(size_info, sizeof(size_info), "backtrace: size:%zu\n", size);
   if (len > 0) {
-    write(fd, size_info, len);
+    if (-1 ==write(fd, size_info, len)) {
+      return;
+    }
   }
   // Use a stack-allocated buffer for demangling to avoid malloc
   char demangle_buf[kDemangleBufferSize];
@@ -197,10 +200,14 @@ void DumpThreadBacktraceToFile(int fd) {
       len = snprintf(line_buf, sizeof(line_buf), "#%zu %p\n", i, array[i]);
     }
     if (len > 0 && len < sizeof(line_buf)) {
-      write(fd, line_buf, len);
+      if (-1 == write(fd, line_buf, len)) {
+        return;
+      }
     }
   }
-  write(fd, "\n", 1);
+  if (-1 == write(fd, "\n", 1)) {
+    return;
+  }
 }
 
 std::mutex lock_4_backtrace;

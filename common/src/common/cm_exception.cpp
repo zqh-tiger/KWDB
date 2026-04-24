@@ -95,7 +95,9 @@ void StoreExceptionStackToFile(const int sig, siginfo_t* const info) {
     "Exception time(UTC):%s\nsignal:%s(%d)\npid=%d tid=%d si_code=%d si_addr=%p\n",
 #endif
     time_buffer, sigstr, sig, getpid(), gettid(), info->si_code, info->si_addr);
-  write(STDOUT_FILENO, kEmergencyBuf, buf_size);
+  if (-1 == write(STDOUT_FILENO, kEmergencyBuf, buf_size)) {
+    return;
+  }
   DumpThreadBacktraceToFile(STDOUT_FILENO);
 
   if (kErrlogPath[0] == '\0') {
@@ -105,8 +107,9 @@ void StoreExceptionStackToFile(const int sig, siginfo_t* const info) {
   if (fd < 0) {
     return;
   }
-  write(fd, kEmergencyBuf, buf_size);
-  DumpThreadBacktraceToFile(fd);
+  if (-1 != write(fd, kEmergencyBuf, buf_size)) {
+    DumpThreadBacktraceToFile(fd);
+  }
   close(fd);
 }
 void ExceptionHandler(const int sig, siginfo_t* const info, void*) {
