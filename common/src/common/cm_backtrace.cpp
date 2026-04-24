@@ -10,15 +10,23 @@
 // See the Mulan PSL v2 for more details.
 
 
+#include <sys/syscall.h>
+#include <sys/stat.h>
+#include <cxxabi.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <dlfcn.h>
 #include <signal.h>
 #include <execinfo.h>
 #include <dirent.h>
 #include <stdio.h>
+#include <memory>
+#include <string>
 #include <iostream>
 #include <fstream>
 #include <sstream>
-#include <sys/syscall.h>
-#include <sys/stat.h>
+#include <cstring>
+#include <cstdint>
 #include "cm_backtrace.h"
 #include "cm_kwdb_context.h"
 #include "kwdb_compatible.h"
@@ -31,29 +39,13 @@ namespace kwdbts {
 const char* kThreadBtName = "thread_backtrace";
 k_char kThreadBtPath[FULL_FILE_NAME_MAX_LEN];
 struct sigaction oldsa;
-
-extern KString demangle(const char* symbol);
+static constexpr size_t kDemangleBufferSize = 8 * 1024;
 
 void DumpLatchInfo();
 
-// send thread backtrace to ostream.
-void PrintThreadBacktrace(std::ostream& os) {
-  const k_int32 MAX_FRAME_LEVEL = 128;
-  void *array[MAX_FRAME_LEVEL];
-  size_t size = backtrace(array, MAX_FRAME_LEVEL);
-  char **symbols = backtrace_symbols(array, size);
-  os << "\nThread 0x"<< std::hex << pthread_self() << std::dec << " pid=" << getpid() << 
-     " tid=" << gettid() << std::endl;
-  os << "backtrace: size:" << size << std::endl;
-  for (size_t i = 0; i < size; i++) {
-    os << "#" << i << " " << demangle(symbols[i]) << std::endl;
-  }
-  free(symbols);
-}
-
 // Generate thread stack backtrace file absolute path.
 void GetThreadBtFilePath(char *threadBtPath, char* folder, char* nowTimeStamp) {
-  if ((std::strlen(folder) + std::strlen(kThreadBtName) + std::strlen(nowTimeStamp) + 6) 
+  if ((std::strlen(folder) + std::strlen(kThreadBtName) + std::strlen(nowTimeStamp) + 6)
        < FULL_FILE_NAME_MAX_LEN) {
     snprintf(threadBtPath, FULL_FILE_NAME_MAX_LEN, "%s/%s.%s.txt", folder,
              kThreadBtName, nowTimeStamp);
@@ -78,16 +70,20 @@ int SignalThreadDump(pid_t pid, uid_t uid, pid_t tid) {
   return syscall(SYS_rt_tgsigqueueinfo, pid, tid, SIGUSR2, &info);
 }
 
+void SetThreadBtPath(char* folder, char* nowTimeStamp) {
+  // dump all threads info
+  memset(kThreadBtPath, 0, sizeof(kThreadBtPath));
+  GetThreadBtFilePath(kThreadBtPath, folder, nowTimeStamp);
+}
+
 // Send signal SIGUSR2 to all threads in /proc/<PID>/task.
 bool DumpAllThreadBacktrace(char* folder, char* nowTimeStamp) {
   DIR *dir;
   struct dirent *entry;
   // dump latch info
   DumpLatchInfo();
-
-  // dump all threads info 
-  memset(kThreadBtPath, 0, sizeof(kThreadBtPath));
-  GetThreadBtFilePath(kThreadBtPath, folder, nowTimeStamp);
+  // set file path
+  SetThreadBtPath(folder, nowTimeStamp);
 
   // Get all thread tids.
   char task_dir[] = "/proc/self/task/";
@@ -117,26 +113,126 @@ bool DumpAllThreadBacktrace(char* folder, char* nowTimeStamp) {
   return true;
 }
 
+void demangle_1(const char* symbol, char* buffer, size_t buffer_size) {
+  if (!symbol || !buffer || buffer_size == 0) {
+    return;
+  }
+  // extract symbol from - _ZN6kwdbts26DumpThreadBacktraceForTestEPcS0_iP9siginfo_tPv
+  if (symbol[0] == '_' && symbol[1] == 'Z') {
+    int status = 0;
+    size_t len = buffer_size;
+    // Use the provided stack buffer. __cxa_demangle will use it if it's large enough.
+    char* ret = abi::__cxa_demangle(symbol, buffer, &len, &status);
+    if (status != 0 || ret == nullptr) {
+      // If demangling fails, fallback to original symbol or mark as unknown
+      strncpy(buffer, symbol, buffer_size - 1);
+      buffer[buffer_size - 1] = '\0';
+    } else {
+      // If ret != buffer, it means realloc happened (which we want to avoid ideally,
+      // but if buffer was too small, __cxa_demangle might realloc.
+      // However, passing a non-null buffer usually prevents malloc if it fits).
+      // To strictly avoid malloc, we ensure buffer is large enough.
+      // If ret != buffer, we should copy back if possible,
+      // but typically with a large enough static buffer, ret == buffer.
+      if (ret != buffer) {
+        strncpy(buffer, ret, buffer_size - 1);
+        buffer[buffer_size - 1] = '\0';
+        free(ret);  // Free if it did allocate
+      }
+    }
+  } else {
+    strncpy(buffer, symbol, buffer_size - 1);
+    buffer[buffer_size - 1] = '\0';
+  }
+}
+
+void DumpThreadBacktraceToFile(int fd) {
+  if (fd < 0) {
+    return;
+  }
+  char thread_info[256];
+  int len = snprintf(thread_info, sizeof(thread_info),
+                     "\nThread 0x%lx pid=%d tid=%ld\n",
+                     static_cast<uint64_t>(pthread_self()), getpid(), static_cast<int64_t>(gettid()));
+  if (len > 0) {
+    write(fd, thread_info, len);
+  }
+  const k_int32 MAX_FRAME_LEVEL = 128;
+  void *array[MAX_FRAME_LEVEL];
+  size_t size = backtrace(array, MAX_FRAME_LEVEL);
+  char size_info[64];
+  len = snprintf(size_info, sizeof(size_info), "backtrace: size:%zu\n", size);
+  if (len > 0) {
+    write(fd, size_info, len);
+  }
+  // Use a stack-allocated buffer for demangling to avoid malloc
+  char demangle_buf[kDemangleBufferSize];
+  for (size_t i = 0; i < size; i++) {
+    char line_buf[512];
+    Dl_info dl_info;
+    if (dladdr(array[i], &dl_info)) {
+      std::string symname("??");
+      const char* display_name = "??";
+      if (dl_info.dli_sname) {
+        demangle_1(dl_info.dli_sname, demangle_buf, sizeof(demangle_buf));
+        display_name = demangle_buf;
+      }
+      uintptr_t offset = (uintptr_t)array[i] - (uintptr_t)dl_info.dli_saddr;
+      if (dl_info.dli_fname) {
+        const char* cur_char = dl_info.dli_fname;
+        const char* lib_name = dl_info.dli_fname;
+        while (*cur_char != 0) {
+          if (*cur_char == '/') {
+            lib_name = cur_char + 1;
+          }
+          cur_char++;
+        }
+        len = snprintf(line_buf, sizeof(line_buf), "#%zu %s(%s+0x%lx) [%p]\n",
+                       i, lib_name, display_name, offset, array[i]);
+      } else {
+        len = snprintf(line_buf, sizeof(line_buf), "#%zu %s+0x%lx [%p]\n",
+                       i, display_name, offset, array[i]);
+      }
+    } else {
+      len = snprintf(line_buf, sizeof(line_buf), "#%zu %p\n", i, array[i]);
+    }
+    if (len > 0 && len < sizeof(line_buf)) {
+      write(fd, line_buf, len);
+    }
+  }
+  write(fd, "\n", 1);
+}
+
+std::mutex lock_4_backtrace;
 // the callback function of SIGUSR2 for dump thread backtrace.
 static void DumpThreadBacktrace(int signr, siginfo_t *info, void *secret) {
-  std::ostringstream oss;
-  PrintThreadBacktrace(oss);
-
-  std::ofstream logfile;
-  logfile.open(kThreadBtPath, std::ios_base::app);
-  logfile << oss.str();
-  logfile.flush();
-  logfile.close();
+  if (kThreadBtPath[0] == '\0') {
+    return;
+  }
+  lock_4_backtrace.lock();
+  int fd = open(kThreadBtPath, O_WRONLY | O_CREAT | O_APPEND, 0644);
+  if (fd < 0) {
+    lock_4_backtrace.unlock();
+    return;
+  }
+  DumpThreadBacktraceToFile(fd);
+  close(fd);
+  lock_4_backtrace.unlock();
 }
 
 // Register signal SIGUSR2 action function.
 void RegisterBacktraceSignalHandler() {
   // Register SIGUSR2 for dump thread backtrace
   struct sigaction sa;
-	sigfillset(&sa.sa_mask);
-	sa.sa_flags = SA_ONSTACK | SA_RESTART | SA_SIGINFO;
-	sa.sa_sigaction = DumpThreadBacktrace;
-	sigaction(SIGUSR2, &sa, &oldsa);
+  sigfillset(&sa.sa_mask);
+  sa.sa_flags = SA_ONSTACK | SA_RESTART | SA_SIGINFO;
+  sa.sa_sigaction = DumpThreadBacktrace;
+  sigaction(SIGUSR2, &sa, &oldsa);
+
+  // load library, so sigaction no need call malloc.
+  const k_int32 MAX_FRAME_LEVEL = 2;
+  void *array[MAX_FRAME_LEVEL];
+  backtrace(array, MAX_FRAME_LEVEL);
 }
 
 // dump latchs stats
@@ -190,5 +286,9 @@ void DumpLatchInfo() {
   fclose(fp2);
 }
 
+void DumpThreadBacktraceForTest(char* folder, char* nowTimeStamp, int signr, siginfo_t *info, void *secret) {
+  SetThreadBtPath(folder, nowTimeStamp);
+  DumpThreadBacktrace(signr, info, secret);
+}
 
 }  // namespace kwdbts
