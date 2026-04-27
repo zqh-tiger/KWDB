@@ -29,7 +29,7 @@ namespace kwdbts {
 namespace {
 
 GTEST_API_ int main(int argc, char **argv) {
-  std::cout << "Running main() from gtest_main.cc\n";
+  std::cout << "Running main() from cm_sigaction_test.cpp\n";
   testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
@@ -60,12 +60,21 @@ TEST(SignalHandlerTest, ExceptionHandlerWritesMinimalRecord) {
 
   std::string log_path = std::string(dir) + "/errlog.log";
   std::string content = ReadFile(log_path.c_str());
+  size_t signal_pos = content.find(std::string("signal=") + std::to_string(SIGSEGV));
+  size_t pid_pos = content.find(" pid=");
+  size_t tid_pos = content.find(" tid=");
+  size_t code_pos = content.find(std::string(" si_code=") + std::to_string(SEGV_MAPERR));
+  size_t addr_pos = content.find(" si_addr=0x1234");
 
-  EXPECT_NE(content.find(std::string("signal=") + std::to_string(SIGSEGV)), std::string::npos);
-  EXPECT_NE(content.find("pid="), std::string::npos);
-  EXPECT_NE(content.find("tid="), std::string::npos);
-  EXPECT_NE(content.find(std::string("si_code=") + std::to_string(SEGV_MAPERR)), std::string::npos);
-  EXPECT_NE(content.find("si_addr=0x1234"), std::string::npos);
+  EXPECT_NE(signal_pos, std::string::npos);
+  EXPECT_NE(pid_pos, std::string::npos);
+  EXPECT_NE(tid_pos, std::string::npos);
+  EXPECT_NE(code_pos, std::string::npos);
+  EXPECT_NE(addr_pos, std::string::npos);
+  EXPECT_TRUE(signal_pos < pid_pos);
+  EXPECT_TRUE(pid_pos < tid_pos);
+  EXPECT_TRUE(tid_pos < code_pos);
+  EXPECT_TRUE(code_pos < addr_pos);
   EXPECT_EQ(content.find("Exception time"), std::string::npos);
   EXPECT_EQ(content.find("backtrace: size:"), std::string::npos);
 
@@ -87,10 +96,15 @@ TEST(SignalHandlerTest, ThreadSignalHandlerWritesMinimalRecord) {
   ssize_t bytes_read = read(fd, buffer, sizeof(buffer) - 1);
   ASSERT_TRUE(bytes_read > 0);
   std::string content(buffer, static_cast<size_t>(bytes_read));
+  size_t signal_pos = content.find(std::string("thread_signal=") + std::to_string(SIGUSR2));
+  size_t pid_pos = content.find(" pid=");
+  size_t tid_pos = content.find(" tid=");
 
-  EXPECT_NE(content.find(std::string("thread_signal=") + std::to_string(SIGUSR2)), std::string::npos);
-  EXPECT_NE(content.find("pid="), std::string::npos);
-  EXPECT_NE(content.find("tid="), std::string::npos);
+  EXPECT_NE(signal_pos, std::string::npos);
+  EXPECT_NE(pid_pos, std::string::npos);
+  EXPECT_NE(tid_pos, std::string::npos);
+  EXPECT_TRUE(signal_pos < pid_pos);
+  EXPECT_TRUE(pid_pos < tid_pos);
 #if defined(__x86_64__) || defined(__aarch64__)
   EXPECT_NE(content.find("pc=0x"), std::string::npos);
   EXPECT_NE(content.find("sp=0x"), std::string::npos);

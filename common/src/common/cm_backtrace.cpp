@@ -246,10 +246,10 @@ static void DumpThreadBacktrace(int signr, siginfo_t *info, void *secret) {
 void RegisterBacktraceSignalHandler() {
   // Register SIGUSR2 for dump thread backtrace
   struct sigaction sa;
-	sigfillset(&sa.sa_mask);
- 	sa.sa_flags = SA_ONSTACK | SA_RESTART | SA_SIGINFO;
- 	sa.sa_sigaction = DumpThreadBacktrace;
- 	sigaction(SIGUSR2, &sa, &oldsa);
+  sigfillset(&sa.sa_mask);
+  sa.sa_flags = SA_ONSTACK | SA_RESTART | SA_SIGINFO;
+  sa.sa_sigaction = DumpThreadBacktrace;
+  sigaction(SIGUSR2, &sa, &oldsa);
 }
 
 #ifdef WITH_TESTS

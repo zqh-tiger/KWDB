@@ -71,6 +71,7 @@ char* AppendSignedDec(char* dest, const char* end, k_int64 value) {
     if (dest < end) {
       *dest++ = '-';
     }
+    // Avoid overflow for INT64_MIN by converting through the unsigned domain.
     return AppendUnsignedDec(dest, end, static_cast<k_uint64>(-(value + 1)) + 1);
   }
   return AppendUnsignedDec(dest, end, static_cast<k_uint64>(value));
@@ -208,6 +209,8 @@ void ExceptionHandler(const int sig, siginfo_t* const info, void*) {
 
 int32_t RegisterExceptionHandler(char *dir, PostExceptionCb cb) {
   const char* kwdb_data_root;
+  // The callback remains part of the API, but executing it is deferred out of
+  // the signal handler because it depends on non-async-signal-safe streams.
   (void)cb;
   if ( (kwdb_data_root = std::getenv("KWDB_DATA_ROOT")) &&
     ((std::strlen(kwdb_data_root) + 1 + std::strlen(kErrlogName)) < FULL_FILE_NAME_MAX_LEN) ) {
