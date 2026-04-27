@@ -112,9 +112,15 @@ bool DumpAllThreadBacktrace(char* folder, char* nowTimeStamp) {
   return true;
 }
 
-void demangle_1(const char* symbol, char* buffer, size_t buffer_size) {
+void demangle(const char* symbol, char* buffer, size_t buffer_size) {
   if (!symbol || !buffer || buffer_size == 0) {
     return;
+  }
+  // If the symbol is too long, maybe buffer not enough. so we truncate it.
+  if (strlen(symbol) > buffer_size / 8) {
+      strncpy(buffer, symbol, buffer_size - 1);
+      buffer[buffer_size - 1] = '\0';
+      return;
   }
   // extract symbol from - _ZN6kwdbts26DumpThreadBacktraceForTestEPcS0_iP9siginfo_tPv
   if (symbol[0] == '_' && symbol[1] == 'Z') {
@@ -177,7 +183,7 @@ void DumpThreadBacktraceToFile(int fd) {
       std::string symname("??");
       const char* display_name = "??";
       if (dl_info.dli_sname) {
-        demangle_1(dl_info.dli_sname, demangle_buf, sizeof(demangle_buf));
+        demangle(dl_info.dli_sname, demangle_buf, sizeof(demangle_buf));
         display_name = demangle_buf;
       }
       uintptr_t offset = (uintptr_t)array[i] - (uintptr_t)dl_info.dli_saddr;
