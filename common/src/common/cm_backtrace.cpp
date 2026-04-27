@@ -14,11 +14,12 @@
 #include <execinfo.h>
 #include <dirent.h>
 #include <stdio.h>
+#include <fcntl.h>
+#include <ucontext.h>
 #include <iostream>
-#include <fstream>
-#include <sstream>
 #include <sys/syscall.h>
 #include <sys/stat.h>
+#include <cerrno>
 #include "cm_backtrace.h"
 #include "cm_kwdb_context.h"
 #include "kwdb_compatible.h"
@@ -30,11 +31,121 @@
 namespace kwdbts {
 const char* kThreadBtName = "thread_backtrace";
 k_char kThreadBtPath[FULL_FILE_NAME_MAX_LEN];
+k_int32 kThreadBtFd = -1;
 struct sigaction oldsa;
 
 extern KString demangle(const char* symbol);
 
 void DumpLatchInfo();
+
+namespace {
+
+char* AppendLiteral(char* dest, const char* end, const char* literal) {
+  while (dest < end && *literal != '\0') {
+    *dest++ = *literal++;
+  }
+  return dest;
+}
+
+char* AppendUnsignedDec(char* dest, const char* end, k_uint64 value) {
+  char digits[32];
+  k_size_t digit_count = 0;
+  do {
+    digits[digit_count++] = static_cast<char>('0' + (value % 10));
+    value /= 10;
+  } while (value != 0 && digit_count < sizeof(digits));
+
+  while (digit_count > 0 && dest < end) {
+    *dest++ = digits[--digit_count];
+  }
+  return dest;
+}
+
+char* AppendHex(char* dest, const char* end, uintptr_t value) {
+  static const char kHexDigits[] = "0123456789abcdef";
+  char digits[2 * sizeof(uintptr_t)];
+  k_size_t digit_count = 0;
+  do {
+    digits[digit_count++] = kHexDigits[value & 0xf];
+    value >>= 4;
+  } while (value != 0 && digit_count < sizeof(digits));
+
+  dest = AppendLiteral(dest, end, "0x");
+  while (digit_count > 0 && dest < end) {
+    *dest++ = digits[--digit_count];
+  }
+  return dest;
+}
+
+void WriteAll(k_int32 fd, const char* data, k_size_t size) {
+  while (fd >= 0 && size > 0) {
+    ssize_t written = write(fd, data, size);
+    if (written > 0) {
+      data += written;
+      size -= static_cast<k_size_t>(written);
+      continue;
+    }
+    if (written == -1 && errno == EINTR) {
+      continue;
+    }
+    break;
+  }
+}
+
+bool ExtractThreadContext(const void* secret, uintptr_t* pc, uintptr_t* sp) {
+  if (secret == nullptr || pc == nullptr || sp == nullptr) {
+    return false;
+  }
+
+  const auto* ctx = static_cast<const ucontext_t*>(secret);
+#if defined(__x86_64__)
+  *pc = static_cast<uintptr_t>(ctx->uc_mcontext.gregs[REG_RIP]);
+  *sp = static_cast<uintptr_t>(ctx->uc_mcontext.gregs[REG_RSP]);
+  return true;
+#elif defined(__aarch64__)
+  *pc = static_cast<uintptr_t>(ctx->uc_mcontext.pc);
+  *sp = static_cast<uintptr_t>(ctx->uc_mcontext.sp);
+  return true;
+#else
+  (void)ctx;
+  return false;
+#endif
+}
+
+k_size_t BuildThreadSignalMessage(char* buffer, k_size_t size, int signr, const void* secret) {
+  char* current = buffer;
+  char* end = buffer + (size == 0 ? 0 : size - 1);
+  uintptr_t pc = 0;
+  uintptr_t sp = 0;
+
+  current = AppendLiteral(current, end, "thread_signal=");
+  current = AppendUnsignedDec(current, end, static_cast<k_uint64>(signr));
+  current = AppendLiteral(current, end, " pid=");
+  current = AppendUnsignedDec(current, end, static_cast<k_uint64>(getpid()));
+  current = AppendLiteral(current, end, " tid=");
+  current = AppendUnsignedDec(current, end, static_cast<k_uint64>(gettid()));
+  if (ExtractThreadContext(secret, &pc, &sp)) {
+    current = AppendLiteral(current, end, " pc=");
+    current = AppendHex(current, end, pc);
+    current = AppendLiteral(current, end, " sp=");
+    current = AppendHex(current, end, sp);
+  }
+  current = AppendLiteral(current, end, "\n");
+  *current = '\0';
+  return static_cast<k_size_t>(current - buffer);
+}
+
+k_int32 OpenThreadBacktraceFd(const char* path) {
+  return open(path, O_WRONLY | O_CREAT | O_TRUNC | O_APPEND | O_CLOEXEC, 0644);
+}
+
+void WriteThreadSignalRecord(k_int32 fd, int signr, const void* secret) {
+  char buffer[256];
+  k_size_t msg_len = BuildThreadSignalMessage(buffer, sizeof(buffer), signr, secret);
+  WriteAll(fd, buffer, msg_len);
+}
+
+}  // namespace
 
 // send thread backtrace to ostream.
 void PrintThreadBacktrace(std::ostream& os) {
@@ -88,6 +199,14 @@ bool DumpAllThreadBacktrace(char* folder, char* nowTimeStamp) {
   // dump all threads info 
   memset(kThreadBtPath, 0, sizeof(kThreadBtPath));
   GetThreadBtFilePath(kThreadBtPath, folder, nowTimeStamp);
+  if (kThreadBtFd >= 0) {
+    close(kThreadBtFd);
+    kThreadBtFd = -1;
+  }
+  kThreadBtFd = OpenThreadBacktraceFd(kThreadBtPath);
+  if (kThreadBtFd < 0) {
+    return false;
+  }
 
   // Get all thread tids.
   char task_dir[] = "/proc/self/task/";
@@ -119,14 +238,8 @@ bool DumpAllThreadBacktrace(char* folder, char* nowTimeStamp) {
 
 // the callback function of SIGUSR2 for dump thread backtrace.
 static void DumpThreadBacktrace(int signr, siginfo_t *info, void *secret) {
-  std::ostringstream oss;
-  PrintThreadBacktrace(oss);
-
-  std::ofstream logfile;
-  logfile.open(kThreadBtPath, std::ios_base::app);
-  logfile << oss.str();
-  logfile.flush();
-  logfile.close();
+  (void)info;
+  WriteThreadSignalRecord(kThreadBtFd, signr, secret);
 }
 
 // Register signal SIGUSR2 action function.
@@ -134,10 +247,16 @@ void RegisterBacktraceSignalHandler() {
   // Register SIGUSR2 for dump thread backtrace
   struct sigaction sa;
 	sigfillset(&sa.sa_mask);
-	sa.sa_flags = SA_ONSTACK | SA_RESTART | SA_SIGINFO;
-	sa.sa_sigaction = DumpThreadBacktrace;
-	sigaction(SIGUSR2, &sa, &oldsa);
+ 	sa.sa_flags = SA_ONSTACK | SA_RESTART | SA_SIGINFO;
+ 	sa.sa_sigaction = DumpThreadBacktrace;
+ 	sigaction(SIGUSR2, &sa, &oldsa);
 }
+
+#ifdef WITH_TESTS
+void WriteThreadBacktraceRecordForTest(int fd, int signr, void* context) {
+  WriteThreadSignalRecord(fd, signr, context);
+}
+#endif
 
 // dump latchs stats
 FILE* openNewFile(const char* file_prefix) {

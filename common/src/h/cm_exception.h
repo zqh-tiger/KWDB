@@ -21,6 +21,10 @@ typedef std::function<void (int sig, std::ostream& os)> PostExceptionCb;
 
 int32_t RegisterExceptionHandler(char *dir, PostExceptionCb cb = nullptr);
 
+#ifdef WITH_TESTS
+void WriteExceptionRecordForTest(int sig, int si_code, void* si_addr);
+#endif
+
 }  // namespace kwdbts
 
 #endif  // COMMON_SRC_H_CM_EXCEPTION_H_

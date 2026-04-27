@@ -27,6 +27,10 @@ bool DumpAllThreadBacktrace(char* folder, char* nowTimeStamp);
 */
 void RegisterBacktraceSignalHandler();
 
+#ifdef WITH_TESTS
+void WriteThreadBacktraceRecordForTest(int fd, int signr, void* context);
+#endif
+
 }  // namespace kwdbts
 
 #endif  // COMMON_SRC_H_CM_BACKTRACE_H_

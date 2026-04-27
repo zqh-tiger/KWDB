@@ -14,12 +14,13 @@
 #include <execinfo.h>
 #include <cxxabi.h>
 #include <unistd.h>
+#include <fcntl.h>
 
-#include <atomic>
-#include <string>
+#include <cerrno>
+#include <cstdlib>
+#include <cstring>
 #include <iostream>
-#include <fstream>
-#include <sstream>
+#include <string>
 
 #include "cm_exception.h"
 #include "cm_kwdb_context.h"
@@ -33,14 +34,120 @@ const char* kErrlogName = "errlog.log";
 k_char kErrlogPath[FULL_FILE_NAME_MAX_LEN];
 
 char kEmergencyBuf[512];
-
-PostExceptionCb kPostExceptionCb = nullptr;
+volatile sig_atomic_t kHandlingException = 0;
+k_int32 kErrlogFd = -1;
 
 #define EXCEPTION_SIGNAL_CNT (6)
 static k_int32 kExceptionSignals[EXCEPTION_SIGNAL_CNT] = {
   SIGSEGV, SIGABRT, SIGBUS, SIGSYS, SIGFPE, SIGILL
 };
 static struct sigaction kOldSigactions[EXCEPTION_SIGNAL_CNT];
+
+namespace {
+
+char* AppendLiteral(char* dest, const char* end, const char* literal) {
+  while (dest < end && *literal != '\0') {
+    *dest++ = *literal++;
+  }
+  return dest;
+}
+
+char* AppendUnsignedDec(char* dest, const char* end, k_uint64 value) {
+  char digits[32];
+  k_size_t digit_count = 0;
+  do {
+    digits[digit_count++] = static_cast<char>('0' + (value % 10));
+    value /= 10;
+  } while (value != 0 && digit_count < sizeof(digits));
+
+  while (digit_count > 0 && dest < end) {
+    *dest++ = digits[--digit_count];
+  }
+  return dest;
+}
+
+char* AppendSignedDec(char* dest, const char* end, k_int64 value) {
+  if (value < 0) {
+    if (dest < end) {
+      *dest++ = '-';
+    }
+    return AppendUnsignedDec(dest, end, static_cast<k_uint64>(-(value + 1)) + 1);
+  }
+  return AppendUnsignedDec(dest, end, static_cast<k_uint64>(value));
+}
+
+char* AppendHex(char* dest, const char* end, uintptr_t value) {
+  static const char kHexDigits[] = "0123456789abcdef";
+  char digits[2 * sizeof(uintptr_t)];
+  k_size_t digit_count = 0;
+  do {
+    digits[digit_count++] = kHexDigits[value & 0xf];
+    value >>= 4;
+  } while (value != 0 && digit_count < sizeof(digits));
+
+  dest = AppendLiteral(dest, end, "0x");
+  while (digit_count > 0 && dest < end) {
+    *dest++ = digits[--digit_count];
+  }
+  return dest;
+}
+
+void WriteAll(k_int32 fd, const char* data, k_size_t size) {
+  while (fd >= 0 && size > 0) {
+    ssize_t written = write(fd, data, size);
+    if (written > 0) {
+      data += written;
+      size -= static_cast<k_size_t>(written);
+      continue;
+    }
+    if (written == -1 && errno == EINTR) {
+      continue;
+    }
+    break;
+  }
+}
+
+k_size_t BuildExceptionMessage(char* buffer, k_size_t size, int sig, const siginfo_t* info) {
+  char* current = buffer;
+  char* end = buffer + (size == 0 ? 0 : size - 1);
+  const k_int32 si_code = info == nullptr ? 0 : info->si_code;
+  const uintptr_t signal_addr =
+      reinterpret_cast<uintptr_t>(info == nullptr ? nullptr : info->si_addr);
+
+  current = AppendLiteral(current, end, "signal=");
+  current = AppendSignedDec(current, end, sig);
+  current = AppendLiteral(current, end, " pid=");
+  current = AppendUnsignedDec(current, end, static_cast<k_uint64>(getpid()));
+  current = AppendLiteral(current, end, " tid=");
+  current = AppendUnsignedDec(current, end, static_cast<k_uint64>(gettid()));
+  current = AppendLiteral(current, end, " si_code=");
+  current = AppendSignedDec(current, end, si_code);
+  current = AppendLiteral(current, end, " si_addr=");
+  current = AppendHex(current, end, signal_addr);
+  current = AppendLiteral(current, end, "\n");
+  *current = '\0';
+  return static_cast<k_size_t>(current - buffer);
+}
+
+void RestorePreviousSignalAction(int sig) {
+  for (k_int32 i = 0; i < EXCEPTION_SIGNAL_CNT; ++i) {
+    if (sig == kExceptionSignals[i]) {
+      sigaction(sig, &kOldSigactions[i], nullptr);
+      return;
+    }
+  }
+}
+
+k_int32 OpenAppendFd(const char* path) {
+  return open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+}
+
+void WriteExceptionRecord(k_int32 fd, int sig, const siginfo_t* info) {
+  k_size_t msg_len = BuildExceptionMessage(kEmergencyBuf, sizeof(kEmergencyBuf), sig, info);
+  WriteAll(fd, kEmergencyBuf, msg_len);
+}
+
+}  // namespace
 
 KString demangle(const char* symbol) {
   // extract symbol from - me.so(_ZN6kwdbts14PrintBacktraceERSo+0x34) [0xffff974b3530]
@@ -85,75 +192,23 @@ void PrintBacktrace(std::ostream& os) {
   free(symbols);
 }
 
-void Out2Console(const KString &str) {
-  std::cout << str;
-  std::cout.flush();
-}
-
-void Out2Console(const char* str) {
-  std::cout << str;
-  std::cout.flush();
-}
-
 void ExceptionHandler(const int sig, siginfo_t* const info, void*) {
-  static std::atomic_bool handlered{false};
-  if (handlered.exchange(true)) {
-    // avoid recursive call
-    signal(sig, SIG_DFL);
-    return;
+  if (kHandlingException != 0) {
+    _exit(128 + sig);
+  }
+  kHandlingException = 1;
+
+  WriteExceptionRecord(STDERR_FILENO, sig, info);
+  if (kErrlogFd >= 0 && kErrlogFd != STDERR_FILENO) {
+    WriteExceptionRecord(kErrlogFd, sig, info);
   }
 
-  time_t curr_time;
-  char time_buffer[32];
-  struct tm curr_time_info;
-  curr_time = time(NULL);
-  localtime_r(&curr_time, &curr_time_info);
-  strftime(time_buffer, 32, "%Y-%m-%d %H:%M:%S", &curr_time_info);
-  const char* sigstr = strsignal(sig);
-  // https://man7.org/linux/man-pages/man2/sigaction.2.html
-  snprintf(kEmergencyBuf, sizeof(kEmergencyBuf),
-#if __GLIBC__ == 2 && __GLIBC_MINOR__ < 30
-    "Exception time(UTC):%s\nsignal:%s(%d)\npid=%d tid=%ld si_code=%d si_addr=%p\n",
-#else
-    "Exception time(UTC):%s\nsignal:%s(%d)\npid=%d tid=%d si_code=%d si_addr=%p\n",
-#endif
-    time_buffer, sigstr, sig, getpid(), gettid(), info->si_code, info->si_addr);
-  Out2Console(kEmergencyBuf);
-
-  // TODO(jinmou): Won't print backtrace if can't malloc.
-  std::ostringstream oss;
-  PrintBacktrace(oss);
-
-  std::string msg = oss.str();
-  Out2Console(msg);
-
-  std::ofstream logfile;
-  logfile.open(kErrlogPath, std::ios_base::app);
-  logfile << kEmergencyBuf;
-  logfile << msg;
-  logfile.flush();
-
-  if (kPostExceptionCb) {
-    oss.str("");
-    kPostExceptionCb(sig, oss);
-    msg = oss.str();
-    Out2Console(msg);
-    logfile << msg;
-    logfile.flush();
-  }
-  logfile.close();
-
-  // https://pkg.go.dev/os/signal#hdr-Go_programs_that_use_cgo_or_SWIG
-  // pass to GO or default
-  for (k_int32 i = 0; i < EXCEPTION_SIGNAL_CNT; i++) {
-    if (sig == kExceptionSignals[i]) {
-      sigaction(sig, &kOldSigactions[i], NULL);
-    }
-  }
+  RestorePreviousSignalAction(sig);
 }
 
 int32_t RegisterExceptionHandler(char *dir, PostExceptionCb cb) {
   const char* kwdb_data_root;
+  (void)cb;
   if ( (kwdb_data_root = std::getenv("KWDB_DATA_ROOT")) &&
     ((std::strlen(kwdb_data_root) + 1 + std::strlen(kErrlogName)) < FULL_FILE_NAME_MAX_LEN) ) {
 #pragma GCC diagnostic push
@@ -169,7 +224,12 @@ int32_t RegisterExceptionHandler(char *dir, PostExceptionCb cb) {
 #pragma GCC diagnostic pop
   }
 
-  kPostExceptionCb = cb;
+  if (kErrlogFd >= 0) {
+    close(kErrlogFd);
+    kErrlogFd = -1;
+  }
+  kErrlogFd = OpenAppendFd(kErrlogPath);
+  kHandlingException = 0;
   for (k_int32 i = 0; i < EXCEPTION_SIGNAL_CNT; i++) {
     struct sigaction sa;
     sa.sa_sigaction = ExceptionHandler;
@@ -184,5 +244,16 @@ int32_t RegisterExceptionHandler(char *dir, PostExceptionCb cb) {
   }
   return 0;
 }
+
+#ifdef WITH_TESTS
+void WriteExceptionRecordForTest(int sig, int si_code, void* si_addr) {
+  siginfo_t info{};
+  info.si_code = si_code;
+  info.si_addr = si_addr;
+  if (kErrlogFd >= 0) {
+    WriteExceptionRecord(kErrlogFd, sig, &info);
+  }
+}
+#endif
 
 }  // namespace kwdbts
