@@ -150,34 +150,108 @@ void demangle(const char* symbol, char* buffer, size_t buffer_size) {
     buffer[buffer_size - 1] = '\0';
   }
 }
+char* AppendLiteral(char* cursor, char* end, const char* text) {
+  while (*text != '\0' && cursor < end) {
+    *cursor++ = *text++;
+  }
+  return cursor;
+}
+
+char* AppendUInt64(char* cursor, char* end, uint64_t value) {
+  char digits[32];
+  size_t len = 0;
+  do {
+    digits[len++] = static_cast<char>('0' + (value % 10));
+    value /= 10;
+  } while (value != 0 && len < sizeof(digits));
+  while (len > 0 && cursor < end) {
+    *cursor++ = digits[--len];
+  }
+  return cursor;
+}
+
+char* AppendInt32(char* cursor, char* end, int32_t value) {
+  bool is_negative = false;
+  uint64_t num;
+  if (value < 0) {
+    *cursor++ = '-';
+    num = static_cast<unsigned int>(-(value + 1)) + 1;
+  } else {
+    num = static_cast<unsigned int>(value);
+  }
+  return AppendUInt64(cursor, end, num);
+}
+char* AppendPtr(char* cursor, char* end, uintptr_t ptr_value) {
+  const char hex_digits[] = "0123456789abcdef";
+  const int ptr_bytes = sizeof(ptr_value);
+  int cur_offset = 0;
+  if (end - cursor <= ptr_bytes * 2) {
+    // no enough buffer to store result.
+    return cursor;
+  }
+  bool header = true;
+  for (int i = 0; i < sizeof(ptr_value); i++) {
+    uint8_t byte = (ptr_value >> ((ptr_bytes - 1 - i) * 8)) & 0xFF;
+    if (byte == 0 && header) {
+      continue;
+    }
+    header = false;
+    *cursor++ = hex_digits[(byte >> 4) & 0x0F];  // high 4 bits.
+    *cursor++ = hex_digits[byte & 0x0F];         // low  4 bits.
+  }
+  return cursor;
+}
+void GenThreadHeader(char* header, size_t* head_size, size_t frame_size) {
+  char* cursor = header;
+  char* end = header + *head_size;
+  cursor = AppendLiteral(cursor, end, "\nThread 0x");
+  cursor = AppendPtr(cursor, end, pthread_self());
+  cursor = AppendLiteral(cursor, end, " pid=");
+  cursor = AppendUInt64(cursor, end, static_cast<uint64_t>(getpid()));
+  cursor = AppendLiteral(cursor, end, " tid=");
+  cursor = AppendUInt64(cursor, end, static_cast<uint64_t>(gettid()));
+  cursor = AppendLiteral(cursor, end, "\nbacktrace: size:");
+  cursor = AppendUInt64(cursor, end, static_cast<uint64_t>(frame_size));
+  cursor = AppendLiteral(cursor, end, "\n");
+  *head_size = static_cast<size_t>(cursor - header);
+}
+
+void GenTraceLine(char* header, size_t* head_size,
+  size_t i, const char* lib_name, const char* display_name, uintptr_t offset, void* array_i) {
+  char* cursor = header;
+  char* end = header + *head_size;
+  //  "#%zu %s(%s+0x%lx) [%p]
+  cursor = AppendLiteral(cursor, end, "#");
+  cursor = AppendUInt64(cursor, end, static_cast<uint64_t>(i));
+  cursor = AppendLiteral(cursor, end, " ");
+  cursor = AppendLiteral(cursor, end, lib_name);
+  cursor = AppendLiteral(cursor, end, "(");
+  cursor = AppendLiteral(cursor, end, display_name);
+  cursor = AppendLiteral(cursor, end, "+0x");
+  cursor = AppendPtr(cursor, end, offset);
+  cursor = AppendLiteral(cursor, end, ") [0x");
+  cursor = AppendPtr(cursor, end, reinterpret_cast<uintptr_t>(array_i));
+  cursor = AppendLiteral(cursor, end, "]\n");
+  *head_size = static_cast<size_t>(cursor - header);
+}
 
 void DumpThreadBacktraceToFile(int fd) {
   if (fd < 0) {
     return;
   }
-  char thread_info[256];
-  int len = snprintf(thread_info, sizeof(thread_info),
-                     "\nThread 0x%lx pid=%d tid=%ld\n",
-                     static_cast<uint64_t>(pthread_self()), getpid(), static_cast<int64_t>(gettid()));
-  if (len > 0) {
-    if (-1 == write(fd, thread_info, len)) {
-      return;
-    }
-  }
   const k_int32 MAX_FRAME_LEVEL = 128;
   void *array[MAX_FRAME_LEVEL];
   size_t size = backtrace(array, MAX_FRAME_LEVEL);
-  char size_info[64];
-  len = snprintf(size_info, sizeof(size_info), "backtrace: size:%zu\n", size);
-  if (len > 0) {
-    if (-1 ==write(fd, size_info, len)) {
-      return;
-    }
+  char thread_info[512];
+  size_t head_size = sizeof(thread_info);
+  GenThreadHeader(thread_info, &head_size, size);
+  if (-1 ==write(fd, thread_info, head_size)) {
+    return;
   }
   // Use a stack-allocated buffer for demangling to avoid malloc
   char demangle_buf[kDemangleBufferSize];
   for (size_t i = 0; i < size; i++) {
-    char line_buf[512];
+    size_t line_len = sizeof(thread_info);
     Dl_info dl_info;
     if (dladdr(array[i], &dl_info)) {
       std::string symname("??");
@@ -196,19 +270,15 @@ void DumpThreadBacktraceToFile(int fd) {
           }
           cur_char++;
         }
-        len = snprintf(line_buf, sizeof(line_buf), "#%zu %s(%s+0x%lx) [%p]\n",
-                       i, lib_name, display_name, offset, array[i]);
+        GenTraceLine(thread_info, &line_len, i, lib_name, display_name, offset, array[i]);
       } else {
-        len = snprintf(line_buf, sizeof(line_buf), "#%zu %s+0x%lx [%p]\n",
-                       i, display_name, offset, array[i]);
+        GenTraceLine(thread_info, &line_len, i, "??", display_name, offset, array[i]);
       }
     } else {
-      len = snprintf(line_buf, sizeof(line_buf), "#%zu %p\n", i, array[i]);
+      GenTraceLine(thread_info, &line_len, i, "??", "??", 1, array[i]);
     }
-    if (len > 0 && len < sizeof(line_buf)) {
-      if (-1 == write(fd, line_buf, len)) {
-        return;
-      }
+    if (-1 == write(fd, thread_info, line_len)) {
+      return;
     }
   }
   if (-1 == write(fd, "\n", 1)) {

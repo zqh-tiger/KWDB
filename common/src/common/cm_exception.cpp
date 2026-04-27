@@ -41,6 +41,10 @@ static k_int32 kExceptionSignals[EXCEPTION_SIGNAL_CNT] = {
 static struct sigaction kOldSigactions[EXCEPTION_SIGNAL_CNT];
 
 extern void DumpThreadBacktraceToFile(int fd);
+extern char* AppendLiteral(char* cursor, char* end, const char* text);
+extern char* AppendUInt64(char* cursor, char* end, uint64_t value);
+extern char* AppendPtr(char* cursor, char* end, uintptr_t ptr_value);
+extern char* AppendInt32(char* cursor, char* end, int32_t value);
 
 static int FastSecondToDate(const time_t& unix_sec, struct tm* tm, int time_zone) {
     static const int kHoursInDay = 24;
@@ -68,13 +72,35 @@ static int FastSecondToDate(const time_t& unix_sec, struct tm* tm, int time_zone
     return 0;
 }
 
-void StoreExceptionStackToFile(const int sig, siginfo_t* const info) {
+void GenExceptionHeader(char* buff, size_t* length, const char* sigstr, int sig, int si_code, uintptr_t ptr) {
+  //  "Exception time(UTC):%s\nsignal:%s(%d)\npid=%d tid=%d si_code=%d si_addr=%p\n",
+  char* cursor = buff;
+  char* end = buff + *length;
+  cursor = AppendLiteral(cursor, end, "Exception time(UTC):");
   time_t curr_time = 0;
   char time_buffer[32];
   struct tm curr_time_info;
   curr_time = time(NULL);
   FastSecondToDate(curr_time, &curr_time_info, 8);
   strftime(time_buffer, 32, "%Y-%m-%d %H:%M:%S", &curr_time_info);
+  cursor = AppendLiteral(cursor, end, time_buffer);
+  cursor = AppendLiteral(cursor, end, "\nsignal:");
+  cursor = AppendLiteral(cursor, end, sigstr);
+  cursor = AppendLiteral(cursor, end, "(");
+  cursor = AppendInt32(cursor, end, sig);
+  cursor = AppendLiteral(cursor, end, ")\npid=");
+  cursor = AppendUInt64(cursor, end, static_cast<uint64_t>(getpid()));
+  cursor = AppendLiteral(cursor, end, " tid=");
+  cursor = AppendUInt64(cursor, end, static_cast<uint64_t>(gettid()));
+  cursor = AppendLiteral(cursor, end, " si_code=");
+  cursor = AppendInt32(cursor, end, si_code);
+  cursor = AppendLiteral(cursor, end, " si_addr=0x");
+  cursor = AppendPtr(cursor, end, ptr);
+  cursor = AppendLiteral(cursor, end, "\n");
+  *length = static_cast<size_t>(cursor - buff);
+}
+
+void StoreExceptionStackToFile(const int sig, siginfo_t* const info) {
   // Replace strsignal with a async-signal-safe lookup
   const char* sigstr = "Unknown";
   switch (sig) {
@@ -86,15 +112,8 @@ void StoreExceptionStackToFile(const int sig, siginfo_t* const info) {
     case SIGILL:  sigstr = "SIGILL"; break;
     default:      sigstr = "Unknown"; break;
   }
-
-  // https://man7.org/linux/man-pages/man2/sigaction.2.html
-  int buf_size = snprintf(kEmergencyBuf, sizeof(kEmergencyBuf),
-#if __GLIBC__ == 2 && __GLIBC_MINOR__ < 30
-    "Exception time(UTC):%s\nsignal:%s(%d)\npid=%d tid=%ld si_code=%d si_addr=%p\n",
-#else
-    "Exception time(UTC):%s\nsignal:%s(%d)\npid=%d tid=%d si_code=%d si_addr=%p\n",
-#endif
-    time_buffer, sigstr, sig, getpid(), gettid(), info->si_code, info->si_addr);
+  size_t buf_size = sizeof(kEmergencyBuf);
+  GenExceptionHeader(kEmergencyBuf, &buf_size, sigstr, sig, info->si_code, reinterpret_cast<uintptr_t>(info->si_addr));
   if (-1 == write(STDOUT_FILENO, kEmergencyBuf, buf_size)) {
     return;
   }
