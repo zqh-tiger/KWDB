@@ -45,7 +45,7 @@ class TestV2Iterator : public TsEngineTestBase {
         for (int k = 0; k < col_num; ++k) {
           bool expect_null = expected[i][j][k] == "<NULL>";
           bool is_null = false;
-          res.data[k][j]->isNull(0, &is_null);
+          res.data[k][0]->isNull(j, &is_null);
           if (expect_null) {
             ASSERT_EQ(is_null, true);
             continue;
@@ -53,40 +53,42 @@ class TestV2Iterator : public TsEngineTestBase {
           ASSERT_EQ(is_null, false);
           switch (col_type[k]) {
             case DATATYPE::TIMESTAMP64:
-              ASSERT_EQ(KTimestamp(res.data[k][j]->mem), parseTimestamp((expected[i][j][k])));
+              ASSERT_EQ(KTimestamp(res.data[k][0]->mem + j * sizeof(KTimestamp)), parseTimestamp((expected[i][j][k])));
               break;
             case DATATYPE::INT16:
-              ASSERT_EQ(KInt16(res.data[k][j]->mem), stoi(expected[i][j][k]));
+              ASSERT_EQ(KInt16(res.data[k][0]->mem + j * sizeof(int16_t)), stoi(expected[i][j][k]));
               break;
             case DATATYPE::INT32:
-              ASSERT_EQ(KInt32(res.data[k][j]->mem), stoi(expected[i][j][k]));
+              ASSERT_EQ(KInt32(res.data[k][0]->mem + j * sizeof(int32_t)), stoi(expected[i][j][k]));
               break;
             case DATATYPE::INT64:
-              ASSERT_EQ(KInt64(res.data[k][j]->mem), stol(expected[i][j][k]));
+              ASSERT_EQ(KInt64(res.data[k][0]->mem + j * sizeof(int64_t)), stol(expected[i][j][k]));
               break;
             case DATATYPE::FLOAT:
-              ASSERT_EQ(KFloat32(res.data[k][j]->mem), stof(expected[i][j][k]));
+              ASSERT_EQ(KFloat32(res.data[k][0]->mem + j * sizeof(float)), stof(expected[i][j][k]));
               break;
             case DATATYPE::DOUBLE:
-              ASSERT_LE(abs(KDouble64(res.data[k][j]->mem) - stod(expected[i][j][k])), 0.00001);
+              ASSERT_LE(abs(KDouble64(res.data[k][0]->mem + j * sizeof(double)) - stod(expected[i][j][k])), 0.00001);
               break;
             case DATATYPE::CHAR:
-              ASSERT_EQ(KChar(res.data[k][j]->mem), *expected[i][j][k].c_str());
+              ASSERT_EQ(KChar(res.data[k][0]->mem + j * 20), *expected[i][j][k].c_str());
               break;
             case DATATYPE::VARSTRING:
               {
-                int16_t str_len = KInt16(res.data[k][j]->mem);
+                VarColumnBatch* b = static_cast<VarColumnBatch*>(const_cast<Batch*>(res.data[k][0]));
+                int16_t str_len = b->getDataLen(j);
                 char str_val[1024];
-                memcpy(str_val, res.data[k][j]->mem + 2, str_len);
+                memcpy(str_val, b->getData(j) + 2, str_len);
                 str_val[str_len] = 0;
                 ASSERT_EQ(str_val, expected[i][j][k]);
               }
               break;
             case DATATYPE::VARBINARY:
               {
-                int16_t str_len = KInt16(res.data[k][j]->mem);
+                VarColumnBatch* b = static_cast<VarColumnBatch*>(const_cast<Batch*>(res.data[k][0]));
+                int16_t str_len = b->getDataLen(j);
                 char str_val[1024];
-                memcpy(str_val, res.data[k][j]->mem + 2, str_len);
+                memcpy(str_val, b->getData(j) + 2, str_len);
                 str_val[str_len] = 0;
                 ASSERT_EQ(str_val, expected[i][j][k]);
               }
@@ -1688,24 +1690,24 @@ vector<TimeBucketInfo> timeBucketAgg_time_bucket_info = {
 vector<vector<DATATYPE>> timeBucketAgg_out_type = {
   // test case 1
   {
-    DATATYPE::TIMESTAMP64, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT16, DATATYPE::INT16, DATATYPE::INT16,
-    DATATYPE::INT32, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT32, DATATYPE::DOUBLE, DATATYPE::FLOAT, DATATYPE::FLOAT,
-    DATATYPE::INT32, DATATYPE::DOUBLE, DATATYPE::DOUBLE, DATATYPE::DOUBLE, DATATYPE::INT32, DATATYPE::CHAR, DATATYPE::CHAR,
-    DATATYPE::INT32, DATATYPE::VARSTRING, DATATYPE::VARSTRING, DATATYPE::INT32, DATATYPE::VARBINARY, DATATYPE::VARBINARY
+    DATATYPE::TIMESTAMP64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT16, DATATYPE::INT16,
+    DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::DOUBLE, DATATYPE::FLOAT, DATATYPE::FLOAT,
+    DATATYPE::INT64, DATATYPE::DOUBLE, DATATYPE::DOUBLE, DATATYPE::DOUBLE, DATATYPE::INT64, DATATYPE::CHAR, DATATYPE::CHAR,
+    DATATYPE::INT64, DATATYPE::VARSTRING, DATATYPE::VARSTRING, DATATYPE::INT64, DATATYPE::VARBINARY, DATATYPE::VARBINARY
   },
   // test case 2
   {
-    DATATYPE::TIMESTAMP64, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT16, DATATYPE::INT16, DATATYPE::INT16,
-    DATATYPE::INT32, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT32, DATATYPE::DOUBLE, DATATYPE::FLOAT, DATATYPE::FLOAT,
-    DATATYPE::INT32, DATATYPE::DOUBLE, DATATYPE::DOUBLE, DATATYPE::DOUBLE, DATATYPE::INT32, DATATYPE::CHAR, DATATYPE::CHAR,
-    DATATYPE::INT32, DATATYPE::VARSTRING, DATATYPE::VARSTRING, DATATYPE::INT32, DATATYPE::VARBINARY, DATATYPE::VARBINARY
+    DATATYPE::TIMESTAMP64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT16, DATATYPE::INT16,
+    DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::DOUBLE, DATATYPE::FLOAT, DATATYPE::FLOAT,
+    DATATYPE::INT64, DATATYPE::DOUBLE, DATATYPE::DOUBLE, DATATYPE::DOUBLE, DATATYPE::INT64, DATATYPE::CHAR, DATATYPE::CHAR,
+    DATATYPE::INT64, DATATYPE::VARSTRING, DATATYPE::VARSTRING, DATATYPE::INT64, DATATYPE::VARBINARY, DATATYPE::VARBINARY
   },
   // test case 3
   {
-    DATATYPE::TIMESTAMP64, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT16, DATATYPE::INT16, DATATYPE::INT16,
-    DATATYPE::INT32, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT32, DATATYPE::DOUBLE, DATATYPE::FLOAT, DATATYPE::FLOAT,
-    DATATYPE::INT32, DATATYPE::DOUBLE, DATATYPE::DOUBLE, DATATYPE::DOUBLE, DATATYPE::INT32, DATATYPE::CHAR, DATATYPE::CHAR,
-    DATATYPE::INT32, DATATYPE::VARSTRING, DATATYPE::VARSTRING, DATATYPE::INT32, DATATYPE::VARBINARY, DATATYPE::VARBINARY
+    DATATYPE::TIMESTAMP64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT32, DATATYPE::INT32, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT16, DATATYPE::INT16,
+    DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::INT64, DATATYPE::DOUBLE, DATATYPE::FLOAT, DATATYPE::FLOAT,
+    DATATYPE::INT64, DATATYPE::DOUBLE, DATATYPE::DOUBLE, DATATYPE::DOUBLE, DATATYPE::INT64, DATATYPE::CHAR, DATATYPE::CHAR,
+    DATATYPE::INT64, DATATYPE::VARSTRING, DATATYPE::VARSTRING, DATATYPE::INT64, DATATYPE::VARBINARY, DATATYPE::VARBINARY
   },
   // test case 4
   {
